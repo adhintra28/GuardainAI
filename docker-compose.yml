@@ -1,0 +1,27 @@
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: compliance_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: compliance
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  compliance-analyzer:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: compliance_app
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
+    depends_on:
+      - postgres
+    restart: unless-stopped

@@ -1,10 +1,19 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { getAccessTokenFromRequest, verifyAccessToken } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { analyzeQueue } from '@/lib/queue';
 import { createTraceId, withTrace } from '@/lib/tracing';
+
+type AnalysisJobRow = {
+  id: string;
+  userId: string;
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  report: Prisma.JsonValue | null;
+  errorMessage: string | null;
+};
 
 export async function POST(req: NextRequest) {
   const traceId = createTraceId();
@@ -32,9 +41,12 @@ export async function POST(req: NextRequest) {
         .update(blBuffer ?? Buffer.from(''))
         .digest('hex');
 
-      const existingJob = await db.analysisJob.findUnique({
-        where: { idempotencyKey },
-      });
+      const [existingJob] = await db.$queryRaw<AnalysisJobRow[]>(Prisma.sql`
+        SELECT id, "userId", status, report, "errorMessage"
+        FROM "AnalysisJob"
+        WHERE "idempotencyKey" = ${idempotencyKey}
+        LIMIT 1
+      `);
 
       if (existingJob && existingJob.userId !== auth.sub) {
         return NextResponse.json({ error: 'This document hash belongs to another user' }, { status: 403 });
@@ -51,14 +63,13 @@ export async function POST(req: NextRequest) {
 
       const job =
         existingJob ??
-        (await db.analysisJob.create({
-          data: {
-            userId: auth.sub,
-            idempotencyKey,
-            status: 'QUEUED',
-            traceId,
-          },
-        }));
+        (
+          await db.$queryRaw<AnalysisJobRow[]>(Prisma.sql`
+            INSERT INTO "AnalysisJob" ("id", "userId", "idempotencyKey", "status", "traceId", "createdAt", "updatedAt")
+            VALUES (${randomUUID()}, ${auth.sub}, ${idempotencyKey}, 'QUEUED'::"JobStatus", ${traceId}, NOW(), NOW())
+            RETURNING id, "userId", status, report, "errorMessage"
+          `)
+        )[0];
 
       if (!existingJob) {
         await analyzeQueue.add(

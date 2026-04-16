@@ -1,158 +1,274 @@
-# AI-Powered Compliance Analysis System
+# Compliance Auditor
 
-A modern, full-stack digital compliance auditor built to analyze business documents (Invoices and Bills of Lading), detect discrepancies, and provide actionable AI-reasoned solutions.
+Compliance Auditor is a full-stack document analysis app for GST invoices and bills of lading. Users authenticate, upload one or both documents, and receive an AI-assisted compliance report with a score, risk level, detected issues, and remediation guidance.
 
-## ⚠️ Problem Statement
-Global logistics and modern accounting rely heavily on precise documentation. However, the verification process between complex documents like GST Invoices and customs Bills of Lading is predominantly manual. Discrepancies such as mismatched item quantities, missing HS codes, malformed Tax IDs (GSTIN), or simple mathematical errors commonly slip past human review. These mistakes lead to severe consequences:
-- Rejection of tax filings or GST claims.
-- Lengthy customs delays and port holding fees.
-- Suspicions of fraudulent activity.
+## Current Project Status
 
-## 💡 The Solution
-This application acts as a tireless **Digital Compliance Auditor**. Using advanced AI extraction alongside strict, deterministic business rule validation, the system guarantees documents are compliant before submission.
-1. **Intelligent Extraction**: Uses OpenAI's Vision capabilities to extract perfectly structured payload data directly from raw images/scans of Invoices and Bills of Lading.
-2. **Rule-Based Validation**: Applies strict mathematics and logic checks (e.g., Subtotal + Tax = Grand Total). 
-3. **Cross-Document Check**: Validates that quantities and parties listed on the commercial Invoice identically match the logistics Bill of Lading.
-4. **AI Reasoning**: For any failed validation, an AI agent highlights the exact problem, explains the real-world consequence (e.g. "Tax Rejection"), and gives the user an actionable fix.
+The repository currently includes:
 
-## 🛠 Tech Stack
-- **Frontend**: React, Next.js (App Router), Tailwind CSS, Lucide React (Icons)
-- **Backend / Routing**: Next.js Server API Routes + Redis queue ingestion
-- **Async Jobs**: BullMQ worker services (2+ workers)
-- **Data Extractor & Reasoning Layer**: OpenAI SDK (`gpt-4o`, `gpt-4o-mini`), `pdf-parse`
-- **Observability**: Structured JSON logs with request trace IDs
-- **Security**: JWT access/refresh auth, OTP-based MFA, and RBAC (`USER`, `ADMIN`)
-- **Language**: TypeScript throughout the entire stack
+- A protected Next.js dashboard at `/` for authenticated users.
+- A dedicated auth experience at `/auth` with email/password login, signup, email OTP login, and Google/GitHub OAuth.
+- JWT-based session handling with access and refresh cookies.
+- Prisma-backed persistence for users, auth state, analysis jobs, reports, and issues.
+- A BullMQ + Redis job pipeline for async document analysis.
+- OpenAI-powered extraction and reasoning layered on top of deterministic validation rules.
+- Docker support for local Postgres, Redis, the Next.js app, and two worker containers.
 
----
+## What The App Does
 
-## 🏗 System Architecture (MVC Pattern)
-Even though Next.js utilizes a modern App Router ecosystem, the application conforms cleanly to an MVC-like architecture pattern:
+1. A user signs in through local auth, email OTP, or Supabase-backed OAuth.
+2. The dashboard accepts invoice and bill of lading uploads in `PDF`, `PNG`, or `JPG` format.
+3. `POST /api/analyze` stores an idempotent job and enqueues work in Redis.
+4. The worker extracts structured data from the documents, validates invoice and B/L rules, then performs cross-document checks when both files are present.
+5. If issues are found, an AI reasoning step adds explanations and suggestions.
+6. The API returns either an immediate report or a queued `jobId`, and the client polls `GET /api/analyze/[jobId]` until the job completes.
 
-- **Model (Data Structures)**: Handled in `src/types/index.ts`. Defines strictly typed TypeScript interfaces for the application context (`Invoice`, `BillOfLading`, `ComplianceReport`). By establishing the schema, the models dictate the contract our AI Extractors must adhere to.
-- **View (User Interface)**: Governed by `src/app/page.tsx` and the `src/components/` directory (`UploadZone`, `DashboardScore`, `IssuesList`). These React Client Components purely handle state bindings (uploading state, parsing results) and use Tailwind CSS for the aesthetic dashboard representation.
-- **Controller (Routing & Business Logic)**: Handled primarily by the Next.js API Route handler at `src/app/api/analyze/route.ts` which receives upload payloads. Rather than dumping all logic in the controller, it delegates tasks intelligently to specialized Service classes:
-   - `aiExtractionService.ts`: Extracts data payload.
-   - `validationEngine.ts`: Processes rule-based algorithms.
-   - `aiReasoningService.ts`: Final AI enrichment for errors.
+## Tech Stack
 
-### ✨ Maintainability and Design Patterns
-- **Singleton Pattern**: The OpenAI client connection is instantiated strictly following the Singleton structural pattern (`src/lib/openai.ts`). This ensures memory stability, prevents API connection leaks, and ensures the DB/API instance is shared.
-- **Centralized Error Logging**: Structured JSON logs with trace IDs are emitted by API and workers for distributed request tracing.
-- **REST API Principles**: The primary controller functions statelessly using correctly verified payload parsing, adhering to standard REST operational structures.
-- **Event-Driven Processing**: The API enqueues jobs to Redis and separate workers process analysis asynchronously, ensuring backend scalability.
+- `Next.js 16` with App Router
+- `React 19`
+- `TypeScript`
+- `Tailwind CSS 4`
+- `Prisma` with PostgreSQL
+- `BullMQ` with Redis
+- `Supabase Auth` and `@supabase/ssr`
+- `OpenAI SDK`
+- `pdf-parse`
+- `jsonwebtoken` + `bcryptjs`
 
----
+## Key Features
 
-## 📂 Project Structure
+- Auth-gated dashboard with redirect-based route protection.
+- Local accounts with password hashing and optional MFA challenge flow.
+- Passwordless login via email OTP.
+- Google and GitHub OAuth through Supabase.
+- Idempotent analysis job creation based on uploaded file content hashes.
+- Background processing with retry/backoff behavior.
+- Rule-based validation plus AI-generated explanations.
+- Encrypted persistence of extracted document payloads.
+- Structured logging and trace IDs across API and worker paths.
+
+## Architecture Overview
+
+### Frontend
+
+- `src/app/page.tsx` loads the authenticated dashboard.
+- `src/app/auth/page.tsx` serves the auth experience.
+- `src/components/ComplianceDashboard.tsx` handles file upload, submission, polling, and result rendering.
+- `src/components/UploadZone.tsx`, `DashboardScore.tsx`, and `IssuesList.tsx` implement the main UI pieces.
+
+### API Layer
+
+- `src/app/api/analyze/route.ts` validates auth, accepts uploads, creates or reuses idempotent jobs, and optionally waits for fast completion.
+- `src/app/api/analyze/[jobId]/route.ts` returns job status for the current user.
+- `src/app/api/auth/**/route.ts` implements registration, login, MFA verification, OTP login, OAuth flows, token refresh, logout, and current-user lookup.
+
+### Services And Workers
+
+- `src/services/aiExtractionService.ts` parses and extracts structured document data.
+- `src/services/validationEngine.ts` runs deterministic document and cross-document checks.
+- `src/services/aiReasoningService.ts` enriches issues with explanations and suggestions.
+- `src/services/analysisPipeline.ts` orchestrates extraction, validation, reasoning, scoring, and persistence.
+- `src/worker/analyzeWorker.ts` consumes BullMQ jobs and updates analysis job state.
+
+### Data And Infrastructure
+
+- `prisma/schema.prisma` defines users, tokens, MFA challenges, provider accounts, jobs, reports, uploaded documents, and compliance issues.
+- `src/lib/auth.ts`, `authCookies.ts`, `authSession.ts`, and `currentUser.ts` handle token signing, cookie storage, and session lookup.
+- `src/lib/queue.ts` and `redis.ts` configure BullMQ.
+- `src/lib/pii.ts` encrypts extracted payloads before storage.
+- `docker-compose.yml` provisions Postgres, Redis, the app container, and two worker containers.
+
+## Project Structure
 
 ```text
 prototype/
-├── public/                       # Static web assets
+├── prisma/
+│   └── schema.prisma
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── analyze/          # (CONTROLLER) Job enqueue + status endpoints
-│   │   ├── globals.css           # Global Tailwind directives
-│   │   ├── layout.tsx            # Next.js App layout
-│   │   └── page.tsx              # (VIEW) Main dashboard interface
-│   ├── components/               # (VIEW) Reusable UI Components
-│   │   ├── DashboardScore.tsx    # Visual score dial
-│   │   ├── IssuesList.tsx        # Accordion containing AI fixes
-│   │   └── UploadZone.tsx        # Drag & Drop file handler
-│   ├── lib/                      # Queue, tracing, logging, encryption helpers
-│   ├── services/                 # (BUSINESS LOGIC)
-│   │   ├── aiExtractionService.ts# OpenAI JSON Extractor
-│   │   ├── aiReasoningService.ts # Contextual Explanations
-│   │   ├── validationEngine.ts   # Deterministic Math & Compliance rules
-│   │   └── analysisPipeline.ts   # End-to-end analysis worker pipeline
-│   ├── worker/
-│   │   └── analyzeWorker.ts      # Dedicated async worker process
-│   └── types/
-│       └── index.ts              # (MODEL) Typescript interfaces & definitions
-├── .env                          # Local secrets (OPENAI_API_KEY)
-├── tailwind.config.ts            # CSS styling configuration
-├── tsconfig.json                 # Typescript rules
-└── package.json                  # Dependencies
+│   │   │   ├── analyze/
+│   │   │   └── auth/
+│   │   ├── auth/
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── components/
+│   │   ├── AuthPage.tsx
+│   │   ├── ComplianceDashboard.tsx
+│   │   ├── DashboardScore.tsx
+│   │   ├── IssuesList.tsx
+│   │   └── UploadZone.tsx
+│   ├── lib/
+│   ├── services/
+│   ├── types/
+│   └── worker/
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
 ```
 
----
+## Environment Variables
 
-## 🚀 How to Run Locally
+Copy `.env.example` to `.env` and set:
+
+```env
+OPENAI_API_KEY="sk-your-openai-api-key-here"
+PII_ENCRYPTION_KEY="replace-with-a-strong-random-secret"
+JWT_ACCESS_SECRET="replace-with-a-strong-random-secret"
+JWT_REFRESH_SECRET="replace-with-another-strong-random-secret"
+NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
+DATABASE_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
+DIRECT_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
+REDIS_URL="redis://localhost:6379"
+```
+
+### Notes
+
+- `OPENAI_API_KEY` is required for extraction and issue reasoning.
+- `PII_ENCRYPTION_KEY` is used to encrypt extracted payloads before storing them.
+- `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` sign app-issued auth tokens.
+- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` must all come from the same Supabase project.
+- Configure Google and GitHub providers in Supabase if you want OAuth enabled locally.
+- Set the OAuth callback URL to `/api/auth/oauth/callback`.
+- When using hosted Supabase Postgres, use the pooler URL for `DATABASE_URL` and the direct connection string for `DIRECT_URL`.
+
+## Local Development
 
 ### Prerequisites
-- Node.js (v18+)
-- An active OpenAI API Key.
 
-### Development Steps
-1. **Clone/Navigate to the directory**:
-   ```bash
-   cd prototype
-   ```
-2. **Install all dependencies**:
+- `Node.js 20+`
+- `npm`
+- A running `PostgreSQL` database
+- A running `Redis` instance
+- A configured `Supabase` project
+- A valid `OpenAI` API key
+
+### Option 1: Run With Docker
+
+1. Install dependencies:
+
    ```bash
    npm install
    ```
-3. **Set up Environment Variables**:
-   Copy `.env.example` to `.env` and fill values:
-   ```env
-   OPENAI_API_KEY="sk-your-openai-api-key-here"
-   PII_ENCRYPTION_KEY="strong-random-secret"
-   JWT_ACCESS_SECRET="strong-random-secret"
-   JWT_REFRESH_SECRET="another-strong-random-secret"
-   NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
-   NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
-   SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
-   DATABASE_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
-   DIRECT_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
-   REDIS_URL="redis://localhost:6379"
-   ```
-   For Supabase, set:
-   - `DATABASE_URL` to the Supabase **pooler** connection string.
-   - `DIRECT_URL` to the Supabase **direct** Postgres connection string.
-   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` from the same Supabase project.
-   - Enable Google and GitHub providers in Supabase Auth, and configure the OAuth callback URL to `/api/auth/oauth/callback`.
 
-4. **Start infrastructure (Postgres + Redis + App + 2 Workers)**:
+2. Create `.env` from `.env.example` and fill in all required values.
+
+3. Start the stack:
+
    ```bash
-   docker compose up -d
+   docker compose up --build
    ```
-5. **Apply Prisma schema to the database**:
+
+4. In another shell, apply the Prisma schema if your database is empty:
+
    ```bash
    npx prisma db push
    ```
-6. **For local non-Docker development, run the API and worker separately**:
+
+5. Open [http://localhost:3000](http://localhost:3000).
+
+### Option 2: Run App And Worker Separately
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Start Postgres and Redis however you prefer.
+
+3. Create `.env` from `.env.example`.
+
+4. Apply the schema:
+
+   ```bash
+   npx prisma db push
+   ```
+
+5. Start the Next.js app:
+
    ```bash
    npm run dev
+   ```
+
+6. Start the worker in a second terminal:
+
+   ```bash
    npm run worker
    ```
-7. **Open the Application**:
-   Navigate to [http://localhost:3000](http://localhost:3000) in your web browser.
 
-## Auth API Endpoints
+7. Visit [http://localhost:3000](http://localhost:3000).
 
-- `POST /api/auth/register` - register a general user.
-- `POST /api/auth/login` - password login; returns an email OTP challenge when MFA is enabled.
-- `POST /api/auth/verify-mfa` - verify the password-login OTP and receive auth cookies.
-- `GET /api/auth/oauth/google` - start Google sign-in via Supabase Auth.
-- `GET /api/auth/oauth/github` - start GitHub sign-in via Supabase Auth.
-- `GET /api/auth/oauth/callback` - OAuth callback that links/syncs the user and issues app JWT cookies.
-- `POST /api/auth/otp/start` - send a Supabase email OTP.
-- `POST /api/auth/otp/verify` - verify a Supabase email OTP and log the user in.
-- `POST /api/auth/refresh` - rotate refresh token and mint a new access token.
-- `POST /api/auth/logout` - revoke refresh token and clear auth cookies.
-- `GET /api/auth/me` - get current authenticated user profile.
+## Available Scripts
 
----
+- `npm run dev` starts the Next.js development server.
+- `npm run build` builds the production app.
+- `npm run start` runs the production server.
+- `npm run lint` runs ESLint.
+- `npm run worker` starts the BullMQ analysis worker.
 
-## 📸 Screenshots
+## Auth API Routes
 
-*(Replace these blocks with actual screenshots once you use the tool)*
+- `POST /api/auth/register` creates a local user and a matching Supabase auth user.
+- `POST /api/auth/login` authenticates email/password and may return an MFA challenge.
+- `POST /api/auth/verify-mfa` verifies the MFA OTP for password login.
+- `POST /api/auth/otp/start` sends an email OTP.
+- `POST /api/auth/otp/verify` verifies the email OTP and signs the user in.
+- `GET /api/auth/oauth/google` starts Google OAuth.
+- `GET /api/auth/oauth/github` starts GitHub OAuth.
+- `GET /api/auth/oauth/callback` completes OAuth and issues app cookies.
+- `POST /api/auth/refresh` rotates the refresh token.
+- `POST /api/auth/logout` revokes the current session.
+- `GET /api/auth/me` returns the current authenticated user.
 
-**Dashboard Upload Screen**
-> *Screenshot of the dual drag-and-drop zones showing a premium dark-themed layout.*
-`![Upload Dashboard](./path-to-upload.png)`
+## Analysis API Routes
 
-**Validation and Reasoning Engine**
-> *Screenshot showcasing the interactive dial highlighting the Compliance Score alongside the color-coded issues list detailing exactly what went wrong and how to fix it.*
-`![Compliance Results](./path-to-results.png)`
+- `POST /api/analyze` uploads one or two documents and creates or reuses an analysis job.
+- `GET /api/analyze/[jobId]` returns the current job state and completed report when available.
+
+## Data Model Summary
+
+The current Prisma schema includes:
+
+- `User`
+- `RefreshToken`
+- `MfaChallenge`
+- `AuthProviderAccount`
+- `AnalysisJob`
+- `AnalysisReport`
+- `UploadedDocument`
+- `ComplianceIssue`
+
+Enums currently in use:
+
+- `UserRole`
+- `AuthProvider`
+- `JobStatus`
+- `DocumentType`
+- `IssueSeverity`
+
+## Typical User Flow
+
+1. Open `/auth`.
+2. Sign up or log in.
+3. Upload an invoice, a bill of lading, or both.
+4. Trigger analysis.
+5. Wait for immediate completion or queued background completion.
+6. Review the compliance score, risk level, issue list, and recommendations.
+
+## Known Setup Gotchas
+
+- The app depends on both Supabase and Prisma-backed Postgres configuration, so incomplete env setup will usually fail auth before analysis.
+- `POST /api/analyze` requires valid auth cookies or a bearer token.
+- Background analysis will not complete unless Redis and at least one worker are running.
+- OAuth flows require provider configuration in Supabase, not just local environment variables.
+
+## Future README Improvements
+
+- Add screenshots of the auth screen and analysis dashboard.
+- Add sample request and response payloads for the analysis endpoints.
+- Document deployment steps for production infrastructure.

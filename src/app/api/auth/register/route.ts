@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { AuthProvider } from '@prisma/client';
 import { db } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
+import { createSupabaseAdminClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -17,12 +19,32 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await hashPassword(password);
+  const supabaseAdmin = createSupabaseAdminClient();
+  const authResult = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+
+  if (authResult.error || !authResult.data.user) {
+    return NextResponse.json(
+      { error: authResult.error?.message || 'Failed to create Supabase auth user' },
+      { status: 500 }
+    );
+  }
+
   const user = await db.user.create({
     data: {
       email,
       passwordHash,
       role: 'USER',
       mfaEnabled: true,
+      providerAccounts: {
+        create: {
+          provider: AuthProvider.LOCAL,
+          providerAccountId: authResult.data.user.id,
+        },
+      },
     },
     select: { id: true, email: true, role: true, mfaEnabled: true, createdAt: true },
   });

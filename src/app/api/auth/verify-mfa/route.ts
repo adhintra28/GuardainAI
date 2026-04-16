@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { hashValue, signAccessToken, signRefreshToken } from '@/lib/auth';
-import { setAuthCookies } from '@/lib/authCookies';
+import { issueSessionForUser } from '@/lib/authSession';
 import { db } from '@/lib/db';
+import { createSupabasePublicClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -22,8 +21,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'MFA challenge is invalid or expired' }, { status: 401 });
   }
 
-  if (challenge.otpHash !== hashValue(String(otp))) {
-    return NextResponse.json({ error: 'Invalid OTP' }, { status: 401 });
+  const supabase = createSupabasePublicClient();
+  const otpResult = await supabase.auth.verifyOtp({
+    email: challenge.user.email,
+    token: String(otp),
+    type: 'email',
+  });
+
+  if (otpResult.error) {
+    return NextResponse.json({ error: otpResult.error.message || 'Invalid OTP' }, { status: 401 });
   }
 
   await db.mfaChallenge.update({
@@ -31,28 +37,8 @@ export async function POST(req: NextRequest) {
     data: { consumedAt: new Date() },
   });
 
-  const refreshJti = randomUUID();
-  const accessToken = signAccessToken({
-    sub: challenge.user.id,
-    email: challenge.user.email,
-    role: challenge.user.role,
-  });
-  const refreshToken = signRefreshToken({
-    sub: challenge.user.id,
-    jti: refreshJti,
-  });
-
-  await db.refreshToken.create({
-    data: {
-      userId: challenge.user.id,
-      tokenHash: hashValue(refreshToken),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
   const res = NextResponse.json({
     user: { id: challenge.user.id, email: challenge.user.email, role: challenge.user.role },
   });
-  setAuthCookies(res, accessToken, refreshToken);
-  return res;
+  return issueSessionForUser(res, challenge.user);
 }

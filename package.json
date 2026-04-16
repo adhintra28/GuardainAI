@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.103.2",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.74.1",
     "ioredis": "^5.10.1",

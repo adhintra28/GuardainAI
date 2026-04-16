@@ -100,6 +100,9 @@ prototype/
    PII_ENCRYPTION_KEY="strong-random-secret"
    JWT_ACCESS_SECRET="strong-random-secret"
    JWT_REFRESH_SECRET="another-strong-random-secret"
+   NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
+   NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+   SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
    DATABASE_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
    DIRECT_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
    REDIS_URL="redis://localhost:6379"
@@ -107,6 +110,8 @@ prototype/
    For Supabase, set:
    - `DATABASE_URL` to the Supabase **pooler** connection string.
    - `DIRECT_URL` to the Supabase **direct** Postgres connection string.
+   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` from the same Supabase project.
+   - Enable Google and GitHub providers in Supabase Auth, and configure the OAuth callback URL to `/api/auth/oauth/callback`.
 
 4. **Start infrastructure (Postgres + Redis + App + 2 Workers)**:
    ```bash
@@ -127,8 +132,13 @@ prototype/
 ## Auth API Endpoints
 
 - `POST /api/auth/register` - register a general user.
-- `POST /api/auth/login` - password login; returns MFA challenge when enabled.
-- `POST /api/auth/verify-mfa` - submit OTP challenge and receive auth cookies.
+- `POST /api/auth/login` - password login; returns an email OTP challenge when MFA is enabled.
+- `POST /api/auth/verify-mfa` - verify the password-login OTP and receive auth cookies.
+- `GET /api/auth/oauth/google` - start Google sign-in via Supabase Auth.
+- `GET /api/auth/oauth/github` - start GitHub sign-in via Supabase Auth.
+- `GET /api/auth/oauth/callback` - OAuth callback that links/syncs the user and issues app JWT cookies.
+- `POST /api/auth/otp/start` - send a Supabase email OTP.
+- `POST /api/auth/otp/verify` - verify a Supabase email OTP and log the user in.
 - `POST /api/auth/refresh` - rotate refresh token and mint a new access token.
 - `POST /api/auth/logout` - revoke refresh token and clear auth cookies.
 - `GET /api/auth/me` - get current authenticated user profile.

@@ -7,7 +7,7 @@ import IssuesList from '@/components/IssuesList';
 import { ComplianceReport } from '@/types';
 import { Shield, Loader2, LogOut } from 'lucide-react';
 
-type AuthMode = 'login' | 'signup';
+type AuthMode = 'login' | 'signup' | 'otp';
 
 type AuthUser = {
   id: string;
@@ -26,14 +26,21 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [otpPreview, setOtpPreview] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [otpSent, setOtpSent] = useState(false);
 
   useEffect(() => {
     const loadSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const callbackError = params.get('authError');
+      if (callbackError) {
+        setAuthError(callbackError);
+        window.history.replaceState({}, '', '/');
+      }
+
       try {
         const res = await fetch('/api/auth/me');
         if (!res.ok) {
@@ -57,7 +64,7 @@ export default function Home() {
     setPassword('');
     setOtp('');
     setChallengeId(null);
-    setOtpPreview(null);
+    setOtpSent(false);
     setAuthError(null);
   };
 
@@ -92,7 +99,6 @@ export default function Home() {
 
     if (data.mfaRequired) {
       setChallengeId(data.challengeId);
-      setOtpPreview(data.otpPreview ?? null);
       setAuthError(null);
       return;
     }
@@ -101,13 +107,29 @@ export default function Home() {
     resetAuthFlow();
   };
 
-  const handleVerifyOtp = async () => {
-    if (!challengeId) return;
-
-    const res = await fetch('/api/auth/verify-mfa', {
+  const handleOtpStart = async () => {
+    const res = await fetch('/api/auth/otp/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challengeId, otp }),
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to send OTP');
+    }
+
+    setOtpSent(true);
+    setAuthError('OTP sent to your email. Enter it below to continue.');
+  };
+
+  const handleVerifyOtp = async () => {
+    const endpoint = challengeId ? '/api/auth/verify-mfa' : '/api/auth/otp/verify';
+    const payload = challengeId ? { challengeId, otp } : { email, otp };
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();
@@ -126,6 +148,12 @@ export default function Home() {
     try {
       if (challengeId) {
         await handleVerifyOtp();
+      } else if (authMode === 'otp') {
+        if (otpSent) {
+          await handleVerifyOtp();
+        } else {
+          await handleOtpStart();
+        }
       } else if (authMode === 'signup') {
         await handleSignup();
       } else {
@@ -145,6 +173,10 @@ export default function Home() {
     setInvoiceFile(null);
     setBlFile(null);
     resetAuthFlow();
+  };
+
+  const handleOAuth = (provider: 'google' | 'github') => {
+    window.location.href = `/api/auth/oauth/${provider}`;
   };
 
   const handleAnalyze = async () => {
@@ -248,9 +280,44 @@ export default function Home() {
               >
                 Sign Up
               </button>
+              <button
+                onClick={() => {
+                  setAuthMode('otp');
+                  resetAuthFlow();
+                }}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  authMode === 'otp' ? 'bg-indigo-600 text-white' : 'text-slate-300'
+                }`}
+              >
+                Email OTP
+              </button>
             </div>
 
             <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handleOAuth('google')}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-slate-500"
+                >
+                  Google
+                </button>
+                <button
+                  onClick={() => handleOAuth('github')}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-slate-500"
+                >
+                  GitHub
+                </button>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-slate-800" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-slate-900 px-2 text-slate-500">or continue with email</span>
+                </div>
+              </div>
+
               <input
                 type="email"
                 placeholder="Email"
@@ -259,7 +326,7 @@ export default function Home() {
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-indigo-500"
               />
 
-              {!challengeId && (
+              {!challengeId && authMode !== 'otp' && (
                 <input
                   type="password"
                   placeholder="Password"
@@ -269,7 +336,7 @@ export default function Home() {
                 />
               )}
 
-              {challengeId && (
+              {(challengeId || (authMode === 'otp' && otpSent)) && (
                 <input
                   type="text"
                   placeholder="Enter 6-digit OTP"
@@ -277,12 +344,6 @@ export default function Home() {
                   onChange={(e) => setOtp(e.target.value)}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-indigo-500"
                 />
-              )}
-
-              {otpPreview && (
-                <p className="text-xs text-amber-300">
-                  Dev OTP: <span className="font-mono">{otpPreview}</span>
-                </p>
               )}
 
               {authError && (
@@ -293,7 +354,12 @@ export default function Home() {
 
               <button
                 onClick={handleAuthSubmit}
-                disabled={authSubmitting || !email || (!challengeId && !password) || (challengeId !== null && !otp)}
+                disabled={
+                  authSubmitting ||
+                  !email ||
+                  ((authMode === 'login' || authMode === 'signup') && !challengeId && !password) ||
+                  ((challengeId !== null || (authMode === 'otp' && otpSent)) && !otp)
+                }
                 className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {authSubmitting ? (
@@ -303,6 +369,8 @@ export default function Home() {
                   </span>
                 ) : challengeId ? (
                   'Verify OTP'
+                ) : authMode === 'otp' ? (
+                  otpSent ? 'Verify Email OTP' : 'Send Email OTP'
                 ) : authMode === 'login' ? (
                   'Login'
                 ) : (

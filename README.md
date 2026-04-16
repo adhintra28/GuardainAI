@@ -267,8 +267,9 @@ Enums currently in use:
 - Background analysis will not complete unless Redis and at least one worker are running.
 - OAuth flows require provider configuration in Supabase, not just local environment variables.
 
-## Future README Improvements
+<img width="1600" height="731" alt="WhatsApp Image 2026-04-16 at 5 14 15 PM" src="https://github.com/user-attachments/assets/e51d787e-6007-4dee-b692-0dbb0e5c8b5f" />
+<img width="1600" height="759" alt="WhatsApp Image 2026-04-16 at 5 15 55 PM" src="https://github.com/user-attachments/assets/cfc0722c-fefc-4e95-a2b8-7a7116357426" />
+<img width="1578" height="819" alt="WhatsApp Image 2026-04-16 at 5 16 13 PM" src="https://github.com/user-attachments/assets/81da537c-a3b6-49bb-80f7-d9f532bd66ff" />
 
-- Add screenshots of the auth screen and analysis dashboard.
-- Add sample request and response payloads for the analysis endpoints.
-- Document deployment steps for production infrastructure.
+
+

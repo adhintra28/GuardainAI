@@ -38,7 +38,7 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col gap-4 sm:flex-row">
               <Link
-                href="/auth"
+                href="/scanner"
                 className="inline-flex items-center justify-center rounded-md bg-on-surface px-6 py-3 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-on-surface/90"
               >
                 Get Started
@@ -184,10 +184,10 @@ export default function LandingPage() {
               Get $10 in free credits. No credit card required. Deploy your first policy in under 10 minutes.
             </p>
             <Link
-              href="/auth"
+              href="/dashboard"
               className="inline-flex items-center justify-center rounded-md bg-white px-8 py-3 text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container"
             >
-              Sign up for free
+              Open dashboard
             </Link>
           </div>
         </section>

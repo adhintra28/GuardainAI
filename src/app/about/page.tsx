@@ -27,10 +27,10 @@ export default function AboutPage() {
           </div>
         </div>
         <Link
-          href="/auth"
-          className="font-medium text-slate-600 transition-colors hover:bg-slate-100 px-4 py-2 rounded"
+          href="/dashboard"
+          className="rounded px-4 py-2 font-medium text-slate-600 transition-colors hover:bg-slate-100"
         >
-          Sign In
+          Dashboard
         </Link>
       </nav>
 

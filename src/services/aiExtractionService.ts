@@ -2,6 +2,7 @@ import { Invoice, BillOfLading } from '@/types';
 import { openai } from '@/lib/openai';
 import { logger } from '@/lib/logger';
 import { PDFParse } from 'pdf-parse';
+import { ensurePdfjsWorkerConfigured } from '@/lib/pdfjsWorker';
 
 const INVOICE_SCHEMA = `
 {
@@ -67,7 +68,7 @@ ${schema}
     let responseText = '';
 
     if (mimeType === 'application/pdf') {
-      // Basic text extraction for PDFs
+      ensurePdfjsWorkerConfigured();
       const parser = new PDFParse({ data: fileBuffer });
       const textResult = await parser.getText();
       await parser.destroy();

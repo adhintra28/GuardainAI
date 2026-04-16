@@ -3,25 +3,56 @@ import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
-import { getOrCreateUserIdFromSession } from '@/lib/authSession';
+import { getOrCreateUserIdForScans } from '@/lib/authSession';
 import { getUploadRoot } from '@/lib/uploadConfig';
 import { getAnalyzeQueue } from '@/lib/queue';
 import { createTraceId } from '@/lib/tracing';
 import { executeComplianceScan } from '@/services/complianceScanJob';
+import { logger } from '@/lib/logger';
 import type { ScanInputFileMeta } from '@/types/complianceScan';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/** Sync scans can run for a while (LLM). */
+export const maxDuration = 300;
 
 function isAllowedMime(mime: string): boolean {
   const m = mime.toLowerCase();
   return m === 'application/pdf' || m.startsWith('text/') || m === 'application/json';
 }
 
-export async function POST(req: Request) {
-  const userId = await getOrCreateUserIdFromSession();
-  if (!userId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+function inferMimeType(fileName: string, declared: string): string {
+  const d = (declared ?? '').trim().toLowerCase();
+  if (d && d !== 'application/octet-stream') return declared;
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext === '.pdf') return 'application/pdf';
+  if (ext === '.json') return 'application/json';
+  if (ext === '.txt' || ext === '.md' || ext === '.csv' || ext === '.log') return 'text/plain';
+  if (ext === '.html' || ext === '.htm') return 'text/html';
+  return 'text/plain';
+}
+
+function uniqueSafeName(original: string, used: Set<string>): string {
+  let base = path.basename(original).replace(/[^\w.\-]/g, '_') || 'document';
+  if (!base.includes('.')) base = `${base}.txt`;
+  let candidate = base;
+  let i = 0;
+  const ext = path.extname(base);
+  const stem = ext ? base.slice(0, -ext.length) : base;
+  while (used.has(candidate.toLowerCase())) {
+    i += 1;
+    candidate = `${stem}_${i}${ext}`;
   }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function isFormDataFileEntry(entry: FormDataEntryValue): entry is File | Blob {
+  return typeof entry !== 'string' && entry != null && typeof (entry as Blob).arrayBuffer === 'function';
+}
+
+export async function POST(req: Request) {
+  const userId = await getOrCreateUserIdForScans();
 
   let form: FormData;
   try {
@@ -43,8 +74,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid domainId' }, { status: 400 });
   }
 
-  const files = form.getAll('files').filter((x): x is File => typeof File !== 'undefined' && x instanceof File);
-  if (files.length === 0) {
+  const rawEntries = form.getAll('files');
+  const fileEntries = rawEntries.filter(isFormDataFileEntry);
+  if (fileEntries.length === 0) {
     return NextResponse.json({ error: 'At least one file is required' }, { status: 400 });
   }
 
@@ -56,24 +88,34 @@ export async function POST(req: Request) {
   await mkdir(jobDir, { recursive: true });
 
   const inputFiles: ScanInputFileMeta[] = [];
+  const usedNames = new Set<string>();
 
-  for (const file of files) {
-    if (file.size > MAX_FILE_BYTES) {
-      return NextResponse.json({ error: `File too large (max 50MB): ${file.name}` }, { status: 400 });
+  for (let i = 0; i < fileEntries.length; i++) {
+    const blob = fileEntries[i];
+    const originalName =
+      typeof File !== 'undefined' && blob instanceof File && blob.name
+        ? blob.name
+        : `document-${i + 1}`;
+
+    if (blob.size > MAX_FILE_BYTES) {
+      return NextResponse.json({ error: `File too large (max 50MB): ${originalName}` }, { status: 400 });
     }
-    const mime = file.type || 'application/octet-stream';
+
+    const declaredType = typeof File !== 'undefined' && blob instanceof File ? blob.type : '';
+    const mime = inferMimeType(originalName, declaredType);
     if (!isAllowedMime(mime)) {
       return NextResponse.json(
-        { error: `Unsupported file type: ${mime}. Use PDF, text, or JSON.` },
+        { error: `Unsupported file type for "${originalName}" (${mime || 'unknown'}). Use PDF, text, Markdown, or JSON.` },
         { status: 400 },
       );
     }
-    const safeName = path.basename(file.name).replace(/[^\w.\-]/g, '_') || 'document';
-    const relativePath = path.join(jobId, safeName);
+
+    const safeName = uniqueSafeName(originalName, usedNames);
+    const relativePath = path.posix.join(jobId, safeName);
     const abs = path.join(uploadRoot, relativePath);
-    const buf = Buffer.from(await file.arrayBuffer());
+    const buf = Buffer.from(await blob.arrayBuffer());
     await writeFile(abs, buf);
-    inputFiles.push({ relativePath, originalName: file.name, mimeType: mime });
+    inputFiles.push({ relativePath, originalName, mimeType: mime });
   }
 
   await db.analysisJob.create({
@@ -88,10 +130,15 @@ export async function POST(req: Request) {
     },
   });
 
-  const sync = process.env.COMPLIANCE_SCAN_SYNC === 'true';
-  if (sync) {
+  /** Local dev runs inline by default so Redis + worker are not required. */
+  const preferSync =
+    process.env.COMPLIANCE_SCAN_SYNC === 'true' ||
+    (process.env.NODE_ENV === 'development' && process.env.USE_BULLMQ_IN_DEV !== 'true');
+
+  async function runSyncInRequest(): Promise<NextResponse> {
     try {
       await executeComplianceScan(jobId);
+      return NextResponse.json({ jobId, status: 'COMPLETED' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Scan failed';
       await db.analysisJob.update({
@@ -100,7 +147,10 @@ export async function POST(req: Request) {
       });
       return NextResponse.json({ jobId, status: 'FAILED', error: msg }, { status: 500 });
     }
-    return NextResponse.json({ jobId, status: 'COMPLETED' });
+  }
+
+  if (preferSync) {
+    return runSyncInRequest();
   }
 
   try {
@@ -111,17 +161,8 @@ export async function POST(req: Request) {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Queue error';
-    await db.analysisJob.update({
-      where: { id: jobId },
-      data: { status: 'FAILED', errorMessage: `Queue unavailable: ${msg}` },
-    });
-    return NextResponse.json(
-      {
-        error: 'Queue unavailable',
-        hint: 'Start Redis and run npm run worker, or set COMPLIANCE_SCAN_SYNC=true in .env',
-      },
-      { status: 503 },
-    );
+    logger.warn('Analyze queue unavailable, running scan synchronously', { jobId, msg });
+    return runSyncInRequest();
   }
 
   return NextResponse.json({ jobId, status: 'QUEUED' });

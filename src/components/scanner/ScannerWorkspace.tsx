@@ -58,8 +58,12 @@ export default function ScannerWorkspace() {
         setJobError('Could not load scan status');
         return;
       }
-      const data = await res.json();
-      if (terminal.has(data.status)) {
+      const data = (await res.json()) as {
+        status?: string;
+        errorMessage?: string;
+        report?: ComplianceScanReport | null;
+      };
+      if (terminal.has(String(data.status))) {
         if (data.status === 'FAILED') {
           setJobStatus('error');
           setJobError(data.errorMessage ?? 'Scan failed');
@@ -67,7 +71,15 @@ export default function ScannerWorkspace() {
         } else {
           setJobStatus('done');
           setJobError(null);
-          setReport(data.report ?? null);
+          const raw = data.report;
+          let normalized: ComplianceScanReport | null = null;
+          if (raw && typeof raw === 'object') {
+            const findings = Array.isArray((raw as ComplianceScanReport).findings)
+              ? (raw as ComplianceScanReport).findings
+              : [];
+            normalized = { ...(raw as ComplianceScanReport), findings };
+          }
+          setReport(normalized);
         }
         return;
       }
@@ -79,15 +91,21 @@ export default function ScannerWorkspace() {
 
   const submitFiles = useCallback(
     async (files: FileList | File[]) => {
-      const list = Array.from(files);
+      const list = Array.from(files).filter((f) => f.size > 0);
       if (list.length === 0) return;
+
+      if (!domainId.trim()) {
+        setJobStatus('error');
+        setJobError('Select a target domain before uploading.');
+        return;
+      }
 
       setJobError(null);
       setReport(null);
       setJobStatus('uploading');
 
       const form = new FormData();
-      form.set('domainId', domainId);
+      form.set('domainId', domainId.trim());
       for (const f of list) {
         form.append('files', f);
       }
@@ -97,7 +115,9 @@ export default function ScannerWorkspace() {
 
       if (!res.ok) {
         setJobStatus('error');
-        setJobError((data as { error?: string }).error ?? 'Upload failed');
+        const hint = (data as { hint?: string }).hint;
+        const err = (data as { error?: string }).error ?? 'Upload failed';
+        setJobError(hint ? `${err} — ${hint}` : err);
         return;
       }
 
@@ -109,12 +129,6 @@ export default function ScannerWorkspace() {
       }
 
       setActiveJobId(jobId);
-
-      if ((data as { status?: string }).status === 'COMPLETED') {
-        setJobStatus('polling');
-        await pollJob(jobId);
-        return;
-      }
 
       setJobStatus('polling');
       await pollJob(jobId);
@@ -136,8 +150,9 @@ export default function ScannerWorkspace() {
         <div>
           <h3 className="mb-4 font-headline text-sm font-semibold text-on-surface">Scan Parameters</h3>
           {domainsError && (
-            <p className="mb-3 rounded-md border border-error-container/50 bg-error-container/10 px-3 py-2 font-body text-xs text-on-error-container">
-              Using offline catalog. {domainsError}
+            <p className="mb-3 rounded-md border border-secondary-container/50 bg-secondary-container/10 px-3 py-2 font-body text-xs text-on-surface-variant">
+              Could not load domains from the API (using built-in catalog). {domainsError} For full accuracy, run{' '}
+              <code className="text-on-surface">npx prisma db push</code> and <code className="text-on-surface">npm run db:seed</code>.
             </p>
           )}
           <div className="space-y-5">
@@ -182,12 +197,15 @@ export default function ScannerWorkspace() {
                   <span className="font-headline text-sm font-semibold text-on-surface">Compliance coverage</span>
                 </div>
                 <ul className="max-h-[280px] space-y-2 overflow-y-auto pr-1 font-body text-sm text-on-surface-variant">
-                  {selected?.compliances.map((item) => (
+                  {(selected?.compliances?.length ? selected.compliances : []).map((item) => (
                     <li key={item} className="flex gap-2 leading-snug">
                       <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
                       <span className="text-on-surface">{item}</span>
                     </li>
                   ))}
+                  {!(selected?.compliances?.length) && (
+                    <li className="text-on-surface-variant">No controls listed — seed compliance domains in the database.</li>
+                  )}
                 </ul>
               </div>
             </div>
@@ -233,7 +251,7 @@ export default function ScannerWorkspace() {
             type="file"
             multiple
             className="hidden"
-            accept=".pdf,.txt,.json,.md,text/plain,application/pdf,application/json"
+            accept=".pdf,.txt,.json,.md,.csv,text/plain,application/pdf,application/json,text/csv,text/markdown"
             onChange={(e) => {
               const fl = e.target.files;
               if (fl) void submitFiles(fl);
@@ -258,7 +276,7 @@ export default function ScannerWorkspace() {
             </button>
           </div>
           <p className="mt-6 font-label text-[0.6875rem] text-outline">
-            Max file size: 50MB. Sign in required.
+            PDF, text, Markdown, CSV, or JSON — up to 50MB per file. Analysis uses the domain selected on the left.
           </p>
         </div>
 
@@ -290,8 +308,8 @@ export default function ScannerWorkspace() {
             </p>
             <p className="mt-3 font-body text-sm text-on-surface">{report.summary}</p>
             <ul className="mt-4 max-h-64 space-y-2 overflow-y-auto border-t border-outline-variant/15 pt-4">
-              {report.findings.map((f) => (
-                <li key={f.actTitle} className="font-body text-sm">
+              {report.findings.map((f, i) => (
+                <li key={`${f.actTitle}-${i}`} className="font-body text-sm">
                   <span className="font-medium text-on-surface">{f.actTitle}</span>
                   <span
                     className={`ml-2 rounded px-1.5 py-0.5 text-[0.6875rem] font-medium uppercase ${

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PDFParse } from 'pdf-parse';
+import { ensurePdfjsWorkerConfigured } from '@/lib/pdfjsWorker';
 import { openai } from '@/lib/openai';
 import { logger } from '@/lib/logger';
 import type { ComplianceScanReport } from '@/types/complianceScan';
@@ -21,6 +22,7 @@ const MAX_CHARS = 48_000;
 export async function extractTextFromBuffer(buffer: Buffer, mimeType: string, fileName: string): Promise<string> {
   const mt = mimeType.toLowerCase();
   if (mt.includes('pdf')) {
+    ensurePdfjsWorkerConfigured();
     const parser = new PDFParse({ data: buffer });
     try {
       const data = await parser.getText();

@@ -1,70 +1,19 @@
-
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: compliance_db
+  db:
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: compliance
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: guardian
     ports:
-      - "5432:5432"
-    restart: unless-stopped
-  
-  redis:
-    image: redis:7-alpine
-    container_name: compliance_redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
+      - '5433:5432'
+    volumes:
+      - guardian_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d guardian']
+      interval: 3s
+      timeout: 5s
+      retries: 10
 
-  compliance-analyzer:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-    container_name: compliance_app
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - postgres
-      - redis
-    restart: unless-stopped
-
-  compliance-worker-1:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: compliance_worker_1
-    command: ["npm", "run", "worker"]
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
-      - REDIS_URL=redis://redis:6379
-      - PII_ENCRYPTION_KEY=${PII_ENCRYPTION_KEY}
-    depends_on:
-      - postgres
-      - redis
-    restart: unless-stopped
-
-  compliance-worker-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: compliance_worker_2
-    command: ["npm", "run", "worker"]
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
-      - REDIS_URL=redis://redis:6379
-      - PII_ENCRYPTION_KEY=${PII_ENCRYPTION_KEY}
-    depends_on:
-      - postgres
-      - redis
-    restart: unless-stopped
+volumes:
+  guardian_pgdata:

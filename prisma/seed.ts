@@ -4,6 +4,12 @@ import { SCANNER_DOMAINS } from '../src/lib/scannerDomains';
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.user.upsert({
+    where: { email: 'prototype@local.guardian' },
+    create: { email: 'prototype@local.guardian' },
+    update: {},
+  });
+
   for (let i = 0; i < SCANNER_DOMAINS.length; i++) {
     const d = SCANNER_DOMAINS[i];
     await prisma.complianceDomain.upsert({

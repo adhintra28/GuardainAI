@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getOrCreateUserIdFromSession } from '@/lib/authSession';
+import { getOrCreateUserIdForScans } from '@/lib/authSession';
 
 export async function GET(_req: Request, ctx: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await ctx.params;
-  const userId = await getOrCreateUserIdFromSession();
-  if (!userId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const userId = await getOrCreateUserIdForScans();
 
   const job = await db.analysisJob.findFirst({
     where: { id: jobId, userId },

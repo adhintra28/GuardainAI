@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 
 type MarketingHeaderProps = {
   /** Highlight nav item */
@@ -37,23 +36,18 @@ export default function MarketingHeader({ active }: MarketingHeaderProps) {
         </nav>
       </div>
       <div className="flex items-center gap-4">
-        <SignedOut>
-          <Link
-            href="/auth"
-            className="hidden font-semibold text-on-surface-variant transition-colors hover:text-on-surface md:block"
-          >
-            Login
-          </Link>
-          <Link
-            href="/auth/sign-up"
-            className="rounded-md bg-on-surface px-4 py-2 text-sm font-semibold text-on-primary transition-colors hover:bg-on-surface/90"
-          >
-            Sign up for free
-          </Link>
-        </SignedOut>
-        <SignedIn>
-          <UserButton afterSignOutUrl="/" />
-        </SignedIn>
+        <Link
+          href="/dashboard"
+          className="hidden font-semibold text-on-surface-variant transition-colors hover:text-on-surface md:block"
+        >
+          Dashboard
+        </Link>
+        <Link
+          href="/scanner"
+          className="rounded-md bg-on-surface px-4 py-2 text-sm font-semibold text-on-primary transition-colors hover:bg-on-surface/90"
+        >
+          Open app
+        </Link>
       </div>
     </header>
   );

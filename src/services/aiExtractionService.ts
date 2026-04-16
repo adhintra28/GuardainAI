@@ -1,6 +1,7 @@
 import { Invoice, BillOfLading } from '@/types';
 import { openai } from '@/lib/openai';
 import { logger } from '@/lib/logger';
+import { PDFParse } from 'pdf-parse';
 
 const INVOICE_SCHEMA = `
 {
@@ -67,9 +68,10 @@ ${schema}
 
     if (mimeType === 'application/pdf') {
       // Basic text extraction for PDFs
-      const pdfParse = require('pdf-parse');
-      const data = await pdfParse(fileBuffer);
-      const textContent = data.text;
+      const parser = new PDFParse({ data: fileBuffer });
+      const textResult = await parser.getText();
+      await parser.destroy();
+      const textContent = textResult.text;
 
       const response = await openai.chat.completions.create({
         model: 'gpt-4o',

@@ -1,4 +1,4 @@
-import { Invoice, BillOfLading, ComplianceIssue, SeverityType } from '@/types';
+import { Invoice, BillOfLading, ComplianceIssue } from '@/types';
 
 export function validateInvoice(invoice: Invoice): ComplianceIssue[] {
   const issues: ComplianceIssue[] = [];
@@ -17,9 +17,7 @@ export function validateInvoice(invoice: Invoice): ComplianceIssue[] {
   }
 
   // Math checks
-  let calculatedSub = 0;
   invoice.items?.forEach(item => {
-    calculatedSub += (item.total_amount || 0);
     if (!item.hsn_code) {
       issues.push({ type: 'HIGH', message: `Missing HSN code for item: ${item.description || 'Unknown'}`, explanation: '', suggestion: '' });
     }

@@ -32,7 +32,30 @@ export default function Home() {
       if (!res.ok) throw new Error('Analysis failed');
 
       const data = await res.json();
-      setReport(data.report);
+      if (data.report) {
+        setReport(data.report);
+        return;
+      }
+
+      if (data.jobId) {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          const statusRes = await fetch(`/api/analyze/${data.jobId}`);
+          const statusData = await statusRes.json();
+
+          if (!statusRes.ok) {
+            throw new Error(statusData.error || 'Analysis failed');
+          }
+
+          if (statusData.status === 'COMPLETED' && statusData.report) {
+            setReport(statusData.report);
+            return;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      throw new Error('Analysis timed out');
     } catch (error) {
       console.error(error);
       alert('Analysis failed. Please try again or check your API key / server logs.');

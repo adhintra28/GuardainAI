@@ -1,83 +1,118 @@
+import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { extractDataFromDocument } from '@/services/aiExtractionService';
-import { validateInvoice, validateBillOfLading, validateCrossDocument, calculateScore } from '@/services/validationEngine';
-import { explainIssues } from '@/services/aiReasoningService';
-import { ComplianceReport, ExtractedData, ComplianceIssue } from '@/types';
-import { logger } from '@/lib/logger';
+import { getAccessTokenFromRequest, verifyAccessToken } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
+import { analyzeQueue } from '@/lib/queue';
+import { createTraceId, withTrace } from '@/lib/tracing';
 
 export async function POST(req: NextRequest) {
-  try {
-    const formData = await req.formData();
-    const invoiceFile = formData.get('invoice') as File | null;
-    const blFile = formData.get('bill_of_lading') as File | null;
-
-    if (!invoiceFile && !blFile) {
-      logger.warn('REST API called without any documents provided.');
-      return NextResponse.json({ error: 'No files provided' }, { status: 400 });
-    }
-
-    logger.info(`Processing request with ${invoiceFile ? 'Invoice' : ''} ${blFile ? 'B/L' : ''}`);
-
-    const extractedData: ExtractedData = {};
-    let allIssues: ComplianceIssue[] = [];
-
-    if (invoiceFile) {
-      const buffer = Buffer.from(await invoiceFile.arrayBuffer());
-      const invData = await extractDataFromDocument(buffer, invoiceFile.type, 'invoice');
-      if (invData) {
-        extractedData.invoice = invData as any;
-        allIssues.push(...validateInvoice(invData as any));
-      }
-    }
-
-    if (blFile) {
-      const buffer = Buffer.from(await blFile.arrayBuffer());
-      const blData = await extractDataFromDocument(buffer, blFile.type, 'bill_of_lading');
-      if (blData) {
-        extractedData.billOfLading = blData as any;
-        allIssues.push(...validateBillOfLading(blData as any));
-      }
-    }
-
-    if (extractedData.invoice && extractedData.billOfLading) {
-      allIssues.push(...validateCrossDocument(extractedData.invoice, extractedData.billOfLading));
-    }
-
-    // Pass through AI Reasoning to get deep explanations
-    if (allIssues.length > 0) {
-      allIssues = await explainIssues(allIssues);
-    }
-
-    const { score, riskLevel } = calculateScore(allIssues);
-
-    const report: ComplianceReport = {
-      compliance_score: score,
-      risk_level: riskLevel,
-      issues: allIssues,
-      summary: `Analyzed ${invoiceFile ? 'Invoice' : ''} ${invoiceFile && blFile ? '& B/L' : (blFile ? 'B/L' : '')}. Found ${allIssues.length} issues.`,
-      recommendation: riskLevel === 'HIGH' ? 'Critical action required before proceeding. Risk of severe delays and rejections.' : 'Review issues and resolve before processing.'
-    };
-
-    // Save report to database seamlessly
+  const traceId = createTraceId();
+  return withTrace(traceId, async () => {
     try {
-      await db.analysisReport.create({
-        data: {
-          complianceScore: score,
-          riskLevel: riskLevel,
-          summary: report.summary,
-          extractedData: extractedData as any,
-          issuesList: allIssues as any,
-        }
-      });
-      logger.info('Analysis Report successfully persisted to database');
-    } catch (dbError) {
-      logger.error('Database insertion failed', dbError);
-    }
+      const token = getAccessTokenFromRequest(req);
+      if (!token) {
+        return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
+      }
+      const auth = verifyAccessToken(token);
 
-    return NextResponse.json({ report, extractedData });
-  } catch (error) {
-    logger.error('Critical failure in Analysis REST API Route:', error);
-    return NextResponse.json({ error: 'Failed to process files' }, { status: 500 });
-  }
+      const formData = await req.formData();
+      const invoiceFile = formData.get('invoice') as File | null;
+      const blFile = formData.get('bill_of_lading') as File | null;
+
+      if (!invoiceFile && !blFile) {
+        logger.warn('REST API called without any documents provided.');
+        return NextResponse.json({ error: 'No files provided' }, { status: 400 });
+      }
+
+      const invoiceBuffer = invoiceFile ? Buffer.from(await invoiceFile.arrayBuffer()) : undefined;
+      const blBuffer = blFile ? Buffer.from(await blFile.arrayBuffer()) : undefined;
+      const idempotencyKey = createHash('sha256')
+        .update(invoiceBuffer ?? Buffer.from(''))
+        .update(blBuffer ?? Buffer.from(''))
+        .digest('hex');
+
+      const existingJob = await db.analysisJob.findUnique({
+        where: { idempotencyKey },
+      });
+
+      if (existingJob && existingJob.userId !== auth.sub) {
+        return NextResponse.json({ error: 'This document hash belongs to another user' }, { status: 403 });
+      }
+
+      if (existingJob?.status === 'COMPLETED' && existingJob.report) {
+        logger.info('Returning completed idempotent job result', { jobId: existingJob.id });
+        return NextResponse.json({
+          jobId: existingJob.id,
+          status: existingJob.status,
+          report: existingJob.report,
+        });
+      }
+
+      const job =
+        existingJob ??
+        (await db.analysisJob.create({
+          data: {
+            userId: auth.sub,
+            idempotencyKey,
+            status: 'QUEUED',
+            traceId,
+          },
+        }));
+
+      if (!existingJob) {
+        await analyzeQueue.add(
+          'analyze-documents',
+          {
+            jobId: job.id,
+            idempotencyKey,
+            traceId,
+            invoice: invoiceBuffer
+              ? {
+                  base64: invoiceBuffer.toString('base64'),
+                  mimeType: invoiceFile?.type || 'application/octet-stream',
+                }
+              : undefined,
+            billOfLading: blBuffer
+              ? {
+                  base64: blBuffer.toString('base64'),
+                  mimeType: blFile?.type || 'application/octet-stream',
+                }
+              : undefined,
+          },
+          {
+            jobId: idempotencyKey,
+            removeOnComplete: 200,
+            removeOnFail: 200,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 2000 },
+          }
+        );
+      }
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 90000) {
+        const state = await db.analysisJob.findUnique({ where: { id: job.id } });
+        if (state?.status === 'COMPLETED' && state.report) {
+          return NextResponse.json({
+            jobId: state.id,
+            status: state.status,
+            report: state.report,
+          });
+        }
+        if (state?.status === 'FAILED') {
+          return NextResponse.json(
+            { jobId: state.id, status: state.status, error: state.errorMessage ?? 'Analysis failed' },
+            { status: 500 }
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      return NextResponse.json({ jobId: job.id, status: 'QUEUED' }, { status: 202 });
+    } catch (error) {
+      logger.error('Critical failure in Analysis REST API Route', error);
+      return NextResponse.json({ error: 'Failed to process files' }, { status: 500 });
+    }
+  });
 }

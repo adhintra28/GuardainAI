@@ -17,8 +17,11 @@ This application acts as a tireless **Digital Compliance Auditor**. Using advanc
 
 ## 🛠 Tech Stack
 - **Frontend**: React, Next.js (App Router), Tailwind CSS, Lucide React (Icons)
-- **Backend / Routing**: Next.js Server API Routes
+- **Backend / Routing**: Next.js Server API Routes + Redis queue ingestion
+- **Async Jobs**: BullMQ worker services (2+ workers)
 - **Data Extractor & Reasoning Layer**: OpenAI SDK (`gpt-4o`, `gpt-4o-mini`), `pdf-parse`
+- **Observability**: Structured JSON logs with request trace IDs
+- **Security**: JWT access/refresh auth, OTP-based MFA, and RBAC (`USER`, `ADMIN`)
 - **Language**: TypeScript throughout the entire stack
 
 ---
@@ -35,8 +38,9 @@ Even though Next.js utilizes a modern App Router ecosystem, the application conf
 
 ### ✨ Maintainability and Design Patterns
 - **Singleton Pattern**: The OpenAI client connection is instantiated strictly following the Singleton structural pattern (`src/lib/openai.ts`). This ensures memory stability, prevents API connection leaks, and ensures the DB/API instance is shared.
-- **Centralized Error Logging**: Advanced diagnostic logging is cleanly decoupled through a global logger (`src/lib/logger.ts`), replacing standard console dumps for clean maintainability.
+- **Centralized Error Logging**: Structured JSON logs with trace IDs are emitted by API and workers for distributed request tracing.
 - **REST API Principles**: The primary controller functions statelessly using correctly verified payload parsing, adhering to standard REST operational structures.
+- **Event-Driven Processing**: The API enqueues jobs to Redis and separate workers process analysis asynchronously, ensuring backend scalability.
 
 ---
 
@@ -48,8 +52,7 @@ prototype/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── analyze/
-│   │   │       └── route.ts      # (CONTROLLER) Document ingestion & routing logic
+│   │   │   └── analyze/          # (CONTROLLER) Job enqueue + status endpoints
 │   │   ├── globals.css           # Global Tailwind directives
 │   │   ├── layout.tsx            # Next.js App layout
 │   │   └── page.tsx              # (VIEW) Main dashboard interface
@@ -57,10 +60,14 @@ prototype/
 │   │   ├── DashboardScore.tsx    # Visual score dial
 │   │   ├── IssuesList.tsx        # Accordion containing AI fixes
 │   │   └── UploadZone.tsx        # Drag & Drop file handler
+│   ├── lib/                      # Queue, tracing, logging, encryption helpers
 │   ├── services/                 # (BUSINESS LOGIC)
 │   │   ├── aiExtractionService.ts# OpenAI JSON Extractor
 │   │   ├── aiReasoningService.ts # Contextual Explanations
-│   │   └── validationEngine.ts   # Deterministic Math & Compliance rules
+│   │   ├── validationEngine.ts   # Deterministic Math & Compliance rules
+│   │   └── analysisPipeline.ts   # End-to-end analysis worker pipeline
+│   ├── worker/
+│   │   └── analyzeWorker.ts      # Dedicated async worker process
 │   └── types/
 │       └── index.ts              # (MODEL) Typescript interfaces & definitions
 ├── .env                          # Local secrets (OPENAI_API_KEY)
@@ -87,16 +94,44 @@ prototype/
    npm install
    ```
 3. **Set up Environment Variables**:
-   Be sure the `.env` file exists at the root of the project with your API key:
+   Copy `.env.example` to `.env` and fill values:
    ```env
    OPENAI_API_KEY="sk-your-openai-api-key-here"
+   PII_ENCRYPTION_KEY="strong-random-secret"
+   JWT_ACCESS_SECRET="strong-random-secret"
+   JWT_REFRESH_SECRET="another-strong-random-secret"
+   DATABASE_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
+   DIRECT_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
+   REDIS_URL="redis://localhost:6379"
    ```
-4. **Start the Development Server**:
+   For Supabase, set:
+   - `DATABASE_URL` to the Supabase **pooler** connection string.
+   - `DIRECT_URL` to the Supabase **direct** Postgres connection string.
+
+4. **Start infrastructure (Postgres + Redis + App + 2 Workers)**:
+   ```bash
+   docker compose up -d
+   ```
+5. **Apply Prisma schema to the database**:
+   ```bash
+   npx prisma db push
+   ```
+6. **For local non-Docker development, run the API and worker separately**:
    ```bash
    npm run dev
+   npm run worker
    ```
-5. **Open the Application**:
+7. **Open the Application**:
    Navigate to [http://localhost:3000](http://localhost:3000) in your web browser.
+
+## Auth API Endpoints
+
+- `POST /api/auth/register` - register a general user.
+- `POST /api/auth/login` - password login; returns MFA challenge when enabled.
+- `POST /api/auth/verify-mfa` - submit OTP challenge and receive auth cookies.
+- `POST /api/auth/refresh` - rotate refresh token and mint a new access token.
+- `POST /api/auth/logout` - revoke refresh token and clear auth cookies.
+- `GET /api/auth/me` - get current authenticated user profile.
 
 ---
 

@@ -10,6 +10,13 @@ services:
     ports:
       - "5432:5432"
     restart: unless-stopped
+  
+  redis:
+    image: redis:7-alpine
+    container_name: compliance_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
 
   compliance-analyzer:
     build: 
@@ -22,6 +29,42 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - postgres
+      - redis
+    restart: unless-stopped
+
+  compliance-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: compliance_worker_1
+    command: ["npm", "run", "worker"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
+      - REDIS_URL=redis://redis:6379
+      - PII_ENCRYPTION_KEY=${PII_ENCRYPTION_KEY}
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  compliance-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: compliance_worker_2
+    command: ["npm", "run", "worker"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/compliance?schema=public
+      - REDIS_URL=redis://redis:6379
+      - PII_ENCRYPTION_KEY=${PII_ENCRYPTION_KEY}
+    depends_on:
+      - postgres
+      - redis
     restart: unless-stopped

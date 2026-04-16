@@ -1,13 +1,5 @@
-import { redirect } from 'next/navigation';
-import AuthPage from '@/components/AuthPage';
-import { getCurrentUser } from '@/lib/currentUser';
+import AuthMarketingLayout from '@/components/guardian/AuthMarketingLayout';
 
-export default async function AuthorizationPage() {
-  const user = await getCurrentUser();
-
-  if (user) {
-    redirect('/');
-  }
-
-  return <AuthPage />;
+export default function AuthPage() {
+  return <AuthMarketingLayout variant="sign-in" />;
 }

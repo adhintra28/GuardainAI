@@ -1,9 +1,9 @@
 import { Worker } from 'bullmq';
 import { db } from '@/lib/db';
 import { ANALYZE_QUEUE_NAME, AnalyzeQueueJobData } from '@/lib/queue';
-import { redisConnection } from '@/lib/redis';
+import { getRedisConnection } from '@/lib/redis';
 import { logger } from '@/lib/logger';
-import { runAnalysisPipeline } from '@/services/analysisPipeline';
+import { executeComplianceScan } from '@/services/complianceScanJob';
 import { withTrace } from '@/lib/tracing';
 
 const worker = new Worker<AnalyzeQueueJobData>(
@@ -11,38 +11,13 @@ const worker = new Worker<AnalyzeQueueJobData>(
   async (job) =>
     withTrace(job.data.traceId, async () => {
       logger.info('Worker picked job', { jobId: job.data.jobId, queueJobId: job.id });
-
-      await db.analysisJob.update({
-        where: { id: job.data.jobId },
-        data: { status: 'PROCESSING' },
-      });
-
-      const { report, encryptedExtractedData } = await runAnalysisPipeline({
-        traceId: job.data.traceId,
-        invoice: job.data.invoice
-          ? { buffer: Buffer.from(job.data.invoice.base64, 'base64'), mimeType: job.data.invoice.mimeType }
-          : undefined,
-        billOfLading: job.data.billOfLading
-          ? { buffer: Buffer.from(job.data.billOfLading.base64, 'base64'), mimeType: job.data.billOfLading.mimeType }
-          : undefined,
-      });
-
-      await db.analysisJob.update({
-        where: { id: job.data.jobId },
-        data: {
-          status: 'COMPLETED',
-          report: JSON.parse(JSON.stringify(report)),
-          extractedData: encryptedExtractedData,
-          errorMessage: null,
-        },
-      });
-
+      await executeComplianceScan(job.data.jobId);
       logger.info('Worker completed job', { jobId: job.data.jobId });
     }),
   {
-    connection: redisConnection,
+    connection: getRedisConnection(),
     concurrency: 2,
-  }
+  },
 );
 
 worker.on('failed', async (job, error) => {
@@ -59,5 +34,5 @@ worker.on('failed', async (job, error) => {
 });
 
 worker.on('ready', () => {
-  logger.info('Analyze worker is ready');
+  logger.info('Compliance scan worker is ready');
 });

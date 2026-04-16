@@ -1,7 +1,8 @@
+// Single URL is enough for Railway Postgres and most hosts. If you later use a transaction
+// pooler for `url`, add `directUrl = env("DIRECT_URL")` and point it at non-pooled Postgres.
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -36,6 +37,7 @@ enum AuthProvider {
   GOOGLE
   GITHUB
   EMAIL_OTP
+  CLERK
 }
 
 model AnalysisReport {
@@ -50,20 +52,43 @@ model AnalysisReport {
   createdAt       DateTime           @default(now())
 }
 
+model ComplianceDomain {
+  id        String           @id
+  label     String
+  sortOrder Int              @default(0)
+  acts      ComplianceAct[]
+  jobs      AnalysisJob[]
+}
+
+model ComplianceAct {
+  id        String           @id @default(uuid())
+  domainId  String
+  domain    ComplianceDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  title     String
+  sortOrder Int              @default(0)
+
+  @@index([domainId])
+}
+
 model AnalysisJob {
-  id             String    @id @default(uuid())
-  userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  idempotencyKey String    @unique
-  status         JobStatus @default(QUEUED)
-  traceId        String
-  report         Json?
-  extractedData  Json?
-  errorMessage   String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                 String             @id @default(uuid())
+  userId             String
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  idempotencyKey     String             @unique
+  status             JobStatus          @default(QUEUED)
+  traceId            String
+  report             Json?
+  extractedData      Json?
+  errorMessage       String?
+  complianceDomainId String?
+  complianceDomain   ComplianceDomain?  @relation(fields: [complianceDomainId], references: [id], onDelete: SetNull)
+  /// Stored upload metadata: [{ relativePath, originalName, mimeType }]
+  inputFiles         Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@index([userId])
+  @@index([complianceDomainId])
 }
 
 model UploadedDocument {

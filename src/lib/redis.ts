@@ -1,7 +1,13 @@
 import IORedis from 'ioredis';
 
-const redisUrl = process.env.REDIS_URL ?? 'redis://redis:6379';
+let connection: IORedis | null = null;
 
-export const redisConnection = new IORedis(redisUrl, {
-  maxRetriesPerRequest: null,
-});
+export function getRedisConnection(): IORedis {
+  if (!connection) {
+    const redisUrl = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
+    connection = new IORedis(redisUrl, {
+      maxRetriesPerRequest: null,
+    });
+  }
+  return connection;
+}

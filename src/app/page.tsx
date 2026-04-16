@@ -1,17 +1,151 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import UploadZone from '@/components/UploadZone';
 import DashboardScore from '@/components/DashboardScore';
 import IssuesList from '@/components/IssuesList';
 import { ComplianceReport } from '@/types';
-import { Shield, Loader2 } from 'lucide-react';
+import { Shield, Loader2, LogOut } from 'lucide-react';
+
+type AuthMode = 'login' | 'signup';
+
+type AuthUser = {
+  id: string;
+  email: string;
+  role: string;
+  mfaEnabled?: boolean;
+};
 
 export default function Home() {
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [blFile, setBlFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [report, setReport] = useState<ComplianceReport | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otpPreview, setOtpPreview] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadSession = async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (!res.ok) {
+          setAuthUser(null);
+          return;
+        }
+
+        const data = await res.json();
+        setAuthUser(data.user);
+      } catch {
+        setAuthUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    loadSession();
+  }, []);
+
+  const resetAuthFlow = () => {
+    setPassword('');
+    setOtp('');
+    setChallengeId(null);
+    setOtpPreview(null);
+    setAuthError(null);
+  };
+
+  const handleSignup = async () => {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Signup failed');
+    }
+
+    setAuthMode('login');
+    setAuthError('Account created. You can log in now.');
+    setPassword('');
+  };
+
+  const handleLogin = async () => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Login failed');
+    }
+
+    if (data.mfaRequired) {
+      setChallengeId(data.challengeId);
+      setOtpPreview(data.otpPreview ?? null);
+      setAuthError(null);
+      return;
+    }
+
+    setAuthUser(data.user);
+    resetAuthFlow();
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!challengeId) return;
+
+    const res = await fetch('/api/auth/verify-mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId, otp }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'OTP verification failed');
+    }
+
+    setAuthUser(data.user);
+    resetAuthFlow();
+  };
+
+  const handleAuthSubmit = async () => {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      if (challengeId) {
+        await handleVerifyOtp();
+      } else if (authMode === 'signup') {
+        await handleSignup();
+      } else {
+        await handleLogin();
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Authentication failed');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setAuthUser(null);
+    setReport(null);
+    setInvoiceFile(null);
+    setBlFile(null);
+    resetAuthFlow();
+  };
 
   const handleAnalyze = async () => {
     if (!invoiceFile && !blFile) return;
@@ -73,7 +207,7 @@ export default function Home() {
       </div>
 
       <div className="relative z-10 max-w-5xl mx-auto px-6 py-12">
-        <header className="flex flex-col items-center justify-center mb-16 text-center">
+        <header className="flex flex-col items-center justify-center mb-12 text-center">
           <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 mb-6 backdrop-blur-md">
             <Shield className="w-8 h-8 text-indigo-400" />
           </div>
@@ -85,8 +219,114 @@ export default function Home() {
           </p>
         </header>
 
-        {!report && (
+        {authLoading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+          </div>
+        ) : !authUser ? (
+          <div className="max-w-md mx-auto rounded-3xl border border-slate-800 bg-slate-900/60 p-8 backdrop-blur-xl shadow-2xl">
+            <div className="flex rounded-xl bg-slate-800/70 p-1 mb-6">
+              <button
+                onClick={() => {
+                  setAuthMode('login');
+                  resetAuthFlow();
+                }}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  authMode === 'login' ? 'bg-indigo-600 text-white' : 'text-slate-300'
+                }`}
+              >
+                Login
+              </button>
+              <button
+                onClick={() => {
+                  setAuthMode('signup');
+                  resetAuthFlow();
+                }}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  authMode === 'signup' ? 'bg-indigo-600 text-white' : 'text-slate-300'
+                }`}
+              >
+                Sign Up
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-indigo-500"
+              />
+
+              {!challengeId && (
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-indigo-500"
+                />
+              )}
+
+              {challengeId && (
+                <input
+                  type="text"
+                  placeholder="Enter 6-digit OTP"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-indigo-500"
+                />
+              )}
+
+              {otpPreview && (
+                <p className="text-xs text-amber-300">
+                  Dev OTP: <span className="font-mono">{otpPreview}</span>
+                </p>
+              )}
+
+              {authError && (
+                <p className={`text-sm ${authError.includes('created') ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {authError}
+                </p>
+              )}
+
+              <button
+                onClick={handleAuthSubmit}
+                disabled={authSubmitting || !email || (!challengeId && !password) || (challengeId !== null && !otp)}
+                className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {authSubmitting ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Please wait...
+                  </span>
+                ) : challengeId ? (
+                  'Verify OTP'
+                ) : authMode === 'login' ? (
+                  'Login'
+                ) : (
+                  'Create Account'
+                )}
+              </button>
+            </div>
+          </div>
+        ) : !report && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-900/50 p-8 rounded-3xl border border-slate-800 backdrop-blur-xl shadow-2xl">
+            <div className="col-span-1 md:col-span-2 flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">{authUser.email}</p>
+                <p className="text-xs text-slate-400">{authUser.role}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+            </div>
+
             <UploadZone 
               label="Upload Invoice (GST)" 
               selectedFile={invoiceFile} 
@@ -122,12 +362,21 @@ export default function Home() {
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
             <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
               <h2 className="text-2xl font-bold tracking-tight text-white">Analysis Results</h2>
-              <button 
-                onClick={() => { setReport(null); setInvoiceFile(null); setBlFile(null); }}
-                className="text-sm font-semibold text-slate-400 hover:text-white transition-colors flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 border border-slate-700 cursor-pointer"
-              >
-                Analyze New Documents
-              </button>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => { setReport(null); setInvoiceFile(null); setBlFile(null); }}
+                  className="text-sm font-semibold text-slate-400 hover:text-white transition-colors flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 border border-slate-700 cursor-pointer"
+                >
+                  Analyze New Documents
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
             </div>
             
             <DashboardScore report={report} />

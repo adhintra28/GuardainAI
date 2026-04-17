@@ -15,17 +15,25 @@ export default function DashboardSidebar({ active }: DashboardSidebarProps) {
 
   return (
     <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-outline-variant/20 bg-surface-container-low py-6 px-4">
-      <div className="mb-8 flex items-center gap-3 px-2">
+      <div className="mb-6 flex items-center gap-3 px-2">
         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-on-primary">
           <span className="material-symbols-outlined text-xl fill">shield</span>
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="font-headline text-lg font-bold tracking-tight text-on-surface">Guardian AI</p>
           <p className="text-[0.6875rem] font-medium uppercase tracking-widest text-on-surface-variant">
             Enterprise Compliance
           </p>
         </div>
       </div>
+
+      <Link
+        href="/"
+        className="mb-6 flex w-full items-center gap-3 rounded-md border border-outline-variant/25 bg-surface-container-lowest px-3 py-2.5 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container/60"
+      >
+        <span className="material-symbols-outlined text-[20px] text-primary">home</span>
+        Home
+      </Link>
 
       <Link
         href="/scanner"

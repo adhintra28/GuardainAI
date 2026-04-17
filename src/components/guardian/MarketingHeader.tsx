@@ -32,7 +32,7 @@ export default function MarketingHeader({ active }: MarketingHeaderProps) {
           {link('product', '/', 'Product')}
           {link('solutions', '/solutions', 'Solutions')}
           {link('pricing', '/pricing', 'Pricing')}
-          {link('docs', '#', 'Documentation')}
+          {link('docs', '/docs', 'Documentation')}
         </nav>
       </div>
       <div className="flex items-center gap-4">

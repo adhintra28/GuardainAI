@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import LandingFooter from '@/components/guardian/LandingFooter';
 import MarketingHeader from '@/components/guardian/MarketingHeader';
@@ -87,6 +88,9 @@ export default function LandingPage() {
                 checks: ['Auto-mapping', 'Custom controls'],
                 cta: 'Explore API',
                 href: '/dashboard',
+                image:
+                  'https://images.unsplash.com/photo-1450101499163-c8848c66ca85?auto=format&fit=crop&w=1200&q=80',
+                imageAlt: 'Documents and policy review on a desk',
               },
               {
                 icon: 'troubleshoot',
@@ -95,14 +99,30 @@ export default function LandingPage() {
                 checks: ['Real-time alerts', 'One-click remediation'],
                 cta: 'Start Scanning',
                 href: '/scanner',
+                image:
+                  'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1200&q=80',
+                imageAlt: 'Analytics dashboard with charts for monitoring',
               },
             ].map((card) => (
               <div
                 key={card.title}
-                className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-10 shadow-sm transition-shadow duration-300 hover:shadow-md"
+                className="group rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-10 shadow-sm transition-shadow duration-300 hover:shadow-md"
               >
-                <div className="mb-8 flex min-h-[200px] items-center justify-center rounded-lg bg-surface-container p-6">
-                  <span className="material-symbols-outlined text-5xl text-primary">{card.icon}</span>
+                <div className="relative mb-8 aspect-[16/10] overflow-hidden rounded-lg border border-outline-variant/15 bg-surface-container">
+                  <Image
+                    src={card.image}
+                    alt={card.imageAlt}
+                    fill
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                    className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                  />
+                  <div
+                    className="pointer-events-none absolute inset-0 bg-gradient-to-t from-surface-container-lowest via-surface-container-lowest/20 to-transparent"
+                    aria-hidden
+                  />
+                  <div className="absolute bottom-4 left-4 flex items-center justify-center rounded-md border border-outline-variant/20 bg-surface-container-lowest/90 p-2.5 shadow-sm backdrop-blur-sm">
+                    <span className="material-symbols-outlined text-2xl text-primary">{card.icon}</span>
+                  </div>
                 </div>
                 <h3 className="mb-3 font-headline text-2xl font-bold text-on-surface">{card.title}</h3>
                 <p className="mb-6 text-base leading-relaxed text-on-surface-variant">{card.desc}</p>

@@ -6,6 +6,7 @@ export type DashboardNavId =
   | 'frameworks'
   | 'reports'
   | 'alerts'
+  | 'docs'
   | 'settings';
 
 export const DASHBOARD_NAV: {
@@ -21,5 +22,6 @@ export const DASHBOARD_NAV: {
   { id: 'frameworks', label: 'Frameworks', href: '/frameworks', icon: 'account_tree' },
   { id: 'reports', label: 'Reports', href: '/reports', icon: 'assessment' },
   { id: 'alerts', label: 'Alerts', href: '/alerts', icon: 'notifications_active' },
+  { id: 'docs', label: 'Documentation', href: '/docs', icon: 'menu_book' },
   { id: 'settings', label: 'Settings', href: '/settings', icon: 'settings' },
 ];

@@ -55,14 +55,20 @@ function mergeFindings(
 
 function scoreFromFindings(findings: { status: string }[]): { score: number; risk: string } {
   if (findings.length === 0) return { score: 0, risk: 'HIGH' };
-  let points = 0;
-  for (const f of findings) {
-    if (f.status === 'pass') points += 1;
-    else if (f.status === 'unknown') points += 0.5;
-  }
-  const score = Math.round((points / findings.length) * 100);
+  const passCount = findings.filter((f) => f.status === 'pass').length;
   const failCount = findings.filter((f) => f.status === 'fail').length;
-  const risk = failCount > 1 ? 'HIGH' : failCount === 1 ? 'MEDIUM' : score >= 80 ? 'LOW' : 'MEDIUM';
+  /**
+   * Proportional score: each control adds 1/n only if `pass`.
+   * `fail` (wrong / non-compliant) and `unknown` add 0 for that slot → 100 only when all pass.
+   */
+  const score = Math.round((passCount / findings.length) * 100);
+  let risk: string;
+  if (passCount === findings.length) risk = 'LOW';
+  else if (failCount > 1) risk = 'HIGH';
+  else if (failCount === 1) risk = 'MEDIUM';
+  else if (passCount === 0) risk = 'HIGH';
+  else if (score >= 80) risk = 'LOW';
+  else risk = 'MEDIUM';
   return { score, risk };
 }
 
@@ -78,6 +84,24 @@ export async function runComplianceScanPipeline(input: {
     .join('\n\n')
     .slice(0, MAX_CHARS);
 
+  const combinedTrimmed = combined.trim();
+  if (combinedTrimmed.length < 10) {
+    const findings = input.actTitles.map((actTitle) => ({
+      actTitle,
+      status: 'fail' as const,
+      reason: 'No usable text extracted from the uploaded documents.',
+    }));
+    const { score, risk } = scoreFromFindings(findings);
+    return {
+      compliance_score: score,
+      risk_level: risk,
+      summary: 'Could not extract enough text from the files to assess compliance.',
+      domainId: input.domainId,
+      domainLabel: input.domainLabel,
+      findings,
+    };
+  }
+
   const actsList = input.actTitles.map((t, i) => `${i + 1}. ${t}`).join('\n');
 
   const system = `You are a compliance analyst. Given document text and a target industry domain, evaluate evidence for each listed compliance area.
@@ -85,7 +109,9 @@ Respond with JSON only (no markdown) matching this shape:
 {"findings":[{"actTitle":string,"status":"pass"|"fail"|"unknown","reason":string,"severity":"low"|"medium"|"high"(optional)}],"summary":string}
 Rules:
 - actTitle must match one of the provided compliance areas exactly (same string).
-- pass = clear supporting evidence in the documents; fail = clear violation or missing required evidence; unknown = insufficient text to decide.
+- pass = the documents clearly contain supporting evidence for that specific compliance area.
+- fail = use fail when: (1) there is a clear violation or missing required evidence, OR (2) the documents are unrelated to the domain, off-topic, or do not address that compliance area at all. Wrong or irrelevant documents must be fail, not unknown.
+- unknown = ONLY when the text is too garbled, empty, or ambiguous to tell — not when the topic simply does not match.
 - Keep reasons concise (1-3 sentences).`;
 
   const user = `Domain: ${input.domainLabel} (${input.domainId})

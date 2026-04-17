@@ -1,275 +1,178 @@
-# Compliance Auditor
+# Guardian AI (prototype)
 
-Compliance Auditor is a full-stack document analysis app for GST invoices and bills of lading. Users authenticate, upload one or both documents, and receive an AI-assisted compliance report with a score, risk level, detected issues, and remediation guidance.
+Guardian AI is a Next.js app for **AI-assisted compliance scanning**. Users pick a **compliance domain** (seeded from regulatory “acts”), upload **one or more documents** (PDFs, plain text, Markdown, JSON, HTML, etc.), and get a **score, risk level, and per-act findings** with summaries. A public **marketing site** lives at `/`; the **scanner** and **dashboard** use a shared shell and work in **prototype mode without sign-in**, while **Clerk** is wired in for real authentication.
 
-## Current Project Status
+## What’s in the repo today
 
-The repository currently includes:
+- **Landing** at `/` — marketing homepage (Guardian AI positioning).
+- **Scanner** at `/scanner` — domain selection, multi-file upload, scan results (via `ScannerWorkspace`).
+- **Dashboard** at `/dashboard` — overview metrics derived from completed scans.
+- **Other UI routes** — reports, alerts, settings, frameworks, domains, solutions, pricing, about, docs (prototype/navigation shells as implemented under `src/app/`).
+- **Clerk** — `ClerkProvider` in `src/app/layout.tsx`, sign-in at `/auth`, sign-up at `/auth/sign-up`, `clerkMiddleware` in `src/middleware.ts` (auth is optional; API routes still resolve a user for jobs).
+- **Postgres + Prisma** — jobs, domains, acts, and scan results. Seed populates domains/acts from `src/lib/scannerDomains.ts`.
+- **OpenAI** — `complianceScanPipeline` extracts text (PDF via `pdf-parse`) and runs a structured LLM pass over the domain’s act titles.
+- **Background processing (optional)** — BullMQ + Redis + `npm run worker` when not running scans synchronously.
 
-- A protected Next.js dashboard at `/` for authenticated users.
-- A dedicated auth experience at `/auth` with email/password login, signup, email OTP login, and Google/GitHub OAuth.
-- JWT-based session handling with access and refresh cookies.
-- Prisma-backed persistence for users, auth state, analysis jobs, reports, and issues.
-- A BullMQ + Redis job pipeline for async document analysis.
-- OpenAI-powered extraction and reasoning layered on top of deterministic validation rules.
-- Docker support for local Postgres, Redis, the Next.js app, and two worker containers.
+## User flow
 
-## What The App Does
+1. Open `/` or go straight to `/scanner`.
+2. Optionally sign in with Clerk (`/auth`); otherwise scans attach to a shared anonymous prototype user.
+3. Choose a compliance domain (loaded from `GET /api/compliance-domains`; requires DB + seed).
+4. Upload files and submit — `POST /api/scans` creates a job, runs the pipeline **inline or queued** (see below).
+5. Poll `GET /api/scans/[jobId]` for `status`, `report`, and errors.
 
-1. A user signs in through local auth, email OTP, or Supabase-backed OAuth.
-2. The dashboard accepts invoice and bill of lading uploads in `PDF`, `PNG`, or `JPG` format.
-3. `POST /api/analyze` stores an idempotent job and enqueues work in Redis.
-4. The worker extracts structured data from the documents, validates invoice and B/L rules, then performs cross-document checks when both files are present.
-5. If issues are found, an AI reasoning step adds explanations and suggestions.
-6. The API returns either an immediate report or a queued `jobId`, and the client polls `GET /api/analyze/[jobId]` until the job completes.
+## Tech stack
 
-## Tech Stack
+- Next.js **16** (App Router), React **19**, TypeScript
+- Tailwind CSS **4**
+- **Clerk** (`@clerk/nextjs`) for authentication UI and sessions
+- **Prisma** + PostgreSQL
+- **BullMQ** + **ioredis** (optional when using the worker)
+- **OpenAI** SDK, **Zod**, **pdf-parse**, **uuid**
 
-- `Next.js 16` with App Router
-- `React 19`
-- `TypeScript`
-- `Tailwind CSS 4`
-- `Prisma` with PostgreSQL
-- `BullMQ` with Redis
-- `Supabase Auth` and `@supabase/ssr`
-- `OpenAI SDK`
-- `pdf-parse`
-- `jsonwebtoken` + `bcryptjs`
-
-## Key Features
-
-- Auth-gated dashboard with redirect-based route protection.
-- Local accounts with password hashing and optional MFA challenge flow.
-- Passwordless login via email OTP.
-- Google and GitHub OAuth through Supabase.
-- Idempotent analysis job creation based on uploaded file content hashes.
-- Background processing with retry/backoff behavior.
-- Rule-based validation plus AI-generated explanations.
-- Encrypted persistence of extracted document payloads.
-- Structured logging and trace IDs across API and worker paths.
-
-## Architecture Overview
+## Architecture (high level)
 
 ### Frontend
 
-- `src/app/page.tsx` loads the authenticated dashboard.
-- `src/app/auth/page.tsx` serves the auth experience.
-- `src/components/ComplianceDashboard.tsx` handles file upload, submission, polling, and result rendering.
-- `src/components/UploadZone.tsx`, `DashboardScore.tsx`, and `IssuesList.tsx` implement the main UI pieces.
+- `src/app/page.tsx` — landing page.
+- `src/app/scanner/page.tsx` — scanner entry; `src/components/scanner/ScannerWorkspace.tsx` — upload, domain pick, polling, results.
+- `src/components/guardian/*` — marketing header/footer, dashboard shell, sidebar, Clerk auth panels.
 
-### API Layer
+### API
 
-- `src/app/api/analyze/route.ts` validates auth, accepts uploads, creates or reuses idempotent jobs, and optionally waits for fast completion.
-- `src/app/api/analyze/[jobId]/route.ts` returns job status for the current user.
-- `src/app/api/auth/**/route.ts` implements registration, login, MFA verification, OTP login, OAuth flows, token refresh, logout, and current-user lookup.
+- `POST /api/scans` — `multipart/form-data`: required `domainId`, one or more `files`. Stores uploads under `UPLOAD_DIR` (default `./uploads`), creates an `AnalysisJob`, then completes **synchronously** or enqueues to Redis.
+- `GET /api/scans/[jobId]` — job status and `report` for the current scan user.
+- `GET /api/compliance-domains` — domains and act titles from the database (503 if DB not migrated/seeded).
 
-### Services And Workers
+### Services & worker
 
-- `src/services/aiExtractionService.ts` parses and extracts structured document data.
-- `src/services/validationEngine.ts` runs deterministic document and cross-document checks.
-- `src/services/aiReasoningService.ts` enriches issues with explanations and suggestions.
-- `src/services/analysisPipeline.ts` orchestrates extraction, validation, reasoning, scoring, and persistence.
-- `src/worker/analyzeWorker.ts` consumes BullMQ jobs and updates analysis job state.
+- `src/services/complianceScanPipeline.ts` — text extraction + LLM structured findings + score/risk.
+- `src/services/complianceScanJob.ts` — loads job, runs pipeline, persists `report` on `AnalysisJob`.
+- `src/worker/analyzeWorker.ts` — BullMQ consumer calling `executeComplianceScan`.
 
-### Data And Infrastructure
+### Auth & users
 
-- `prisma/schema.prisma` defines users, tokens, MFA challenges, provider accounts, jobs, reports, uploaded documents, and compliance issues.
-- `src/lib/auth.ts`, `authCookies.ts`, `authSession.ts`, and `currentUser.ts` handle token signing, cookie storage, and session lookup.
-- `src/lib/queue.ts` and `redis.ts` configure BullMQ.
-- `src/lib/pii.ts` encrypts extracted payloads before storage.
-- `docker-compose.yml` provisions Postgres, Redis, the app container, and two worker containers.
+- `src/lib/authSession.ts` — maps Clerk users to `User` rows by email, or uses a fixed anonymous email for unsigned scans.
 
-## Project Structure
+### Infra
+
+- `docker-compose.yml` — **PostgreSQL16** only (`guardian` DB, host port **5433**). No Redis/app/worker services in compose.
+- `Dockerfile` — production-style Node20 image that builds and runs `next start`.
+
+## Sync vs queued scans
+
+- **`COMPLIANCE_SCAN_SYNC=true`** — run the full scan in the API process (recommended on hosts without Redis, e.g. Railway).
+- **Development** — scans run **inline by default** so you do not need Redis or a worker unless you set `USE_BULLMQ_IN_DEV=true`.
+- **Production-style queue** — unset `COMPLIANCE_SCAN_SYNC` (or set to `false`), run Redis, start `npm run worker`. If the queue is unavailable, `POST /api/scans` falls back to synchronous execution.
+
+## Project structure
 
 ```text
 prototype/
 ├── prisma/
-│   └── schema.prisma
+│   ├── schema.prisma
+│   └── seed.ts
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── analyze/
-│   │   │   └── auth/
+│   │   │   ├── compliance-domains/
+│   │   │   └── scans/
 │   │   ├── auth/
+│   │   ├── dashboard/
+│   │   ├── scanner/
 │   │   ├── layout.tsx
 │   │   └── page.tsx
 │   ├── components/
-│   │   ├── AuthPage.tsx
-│   │   ├── ComplianceDashboard.tsx
-│   │   ├── DashboardScore.tsx
-│   │   ├── IssuesList.tsx
-│   │   └── UploadZone.tsx
+│   │   ├── guardian/
+│   │   └── scanner/
 │   ├── lib/
 │   ├── services/
 │   ├── types/
-│   └── worker/
+│   ├── worker/
+│   └── middleware.ts
 ├── docker-compose.yml
 ├── Dockerfile
 ├── package.json
 └── README.md
 ```
 
-## Environment Variables
+## Environment variables
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env`. Important values:
 
-```env
-OPENAI_API_KEY="sk-your-openai-api-key-here"
-PII_ENCRYPTION_KEY="replace-with-a-strong-random-secret"
-JWT_ACCESS_SECRET="replace-with-a-strong-random-secret"
-JWT_REFRESH_SECRET="replace-with-another-strong-random-secret"
-NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
-SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
-DATABASE_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
-DIRECT_URL="postgresql://postgres:password@localhost:5432/compliance?schema=public"
-REDIS_URL="redis://localhost:6379"
-```
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | LLM calls for compliance evaluation |
+| `OPENAI_COMPLIANCE_MODEL` | Model name (default in example: `gpt-4o-mini`) |
+| `PII_ENCRYPTION_KEY` | Used where sensitive payloads are encrypted (see codebase) |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Clerk |
+| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | Match app routes (`/auth`, `/auth/sign-up`) |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis when using BullMQ + worker |
+| `COMPLIANCE_SCAN_SYNC` | `true` to force in-process scans |
+| `USE_BULLMQ_IN_DEV` | Set to opt into the queue in development |
 
-### Notes
+Railway-focused notes in `.env.example` explain using a **public** Postgres URL from a laptop vs private network URLs.
 
-- `OPENAI_API_KEY` is required for extraction and issue reasoning.
-- `PII_ENCRYPTION_KEY` is used to encrypt extracted payloads before storing them.
-- `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` sign app-issued auth tokens.
-- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` must all come from the same Supabase project.
-- Configure Google and GitHub providers in Supabase if you want OAuth enabled locally.
-- Set the OAuth callback URL to `/api/auth/oauth/callback`.
-- When using hosted Supabase Postgres, use the pooler URL for `DATABASE_URL` and the direct connection string for `DIRECT_URL`.
-
-## Local Development
+## Local development
 
 ### Prerequisites
 
-- `Node.js 20+`
-- `npm`
-- A running `PostgreSQL` database
-- A running `Redis` instance
-- A configured `Supabase` project
-- A valid `OpenAI` API key
+- Node.js **20+** and npm
+- PostgreSQL (local or Docker)
+- OpenAI API key
+- Clerk application keys (for sign-in; scans still work without login in prototype mode)
+- Redis + worker **only** if you disable sync / enable BullMQ in dev
 
-### Option 1: Run With Docker
+### Quick start (Postgres via Docker)
 
-1. Install dependencies:
+1. `npm install`
+2. Copy `.env.example` → `.env` and set `DATABASE_URL` (for compose: `postgresql://postgres:postgres@127.0.0.1:5433/guardian?schema=public`).
+3. `npm run db:up` — starts Postgres (`docker compose up -d`).
+4. `npx prisma db push` and `npm run db:seed` — schema + compliance domains/acts.
+5. `npm run dev` — [http://localhost:3000](http://localhost:3000).
 
-   ```bash
-   npm install
-   ```
+### Worker + Redis (optional)
 
-2. Create `.env` from `.env.example` and fill in all required values.
+1. Run Redis locally and set `REDIS_URL`.
+2. Set `USE_BULLMQ_IN_DEV=true` and ensure `COMPLIANCE_SCAN_SYNC` is not forcing sync (or use production-like env).
+3. In a second terminal: `npm run worker`.
 
-3. Start the stack:
+### Scripts
 
-   ```bash
-   docker compose up --build
-   ```
+- `npm run dev` — Next.js dev server
+- `npm run build` / `npm run start` — production build and server
+- `npm run lint` — ESLint
+- `npm run worker` — BullMQ worker
+- `npm run db:up` — Docker Compose Postgres
+- `npm run db:push` — `prisma db push`
+- `npm run db:seed` — seed domains/acts
+- `npm run db:migrate:deploy` — `prisma migrate deploy`
 
-4. In another shell, apply the Prisma schema if your database is empty:
+## Data model (Prisma)
 
-   ```bash
-   npx prisma db push
-   ```
+Notable models:
 
-5. Open [http://localhost:3000](http://localhost:3000).
+- `User` — still used for job ownership (Clerk users upserted by email; anonymous prototype user for unsigned scans).
+- `ComplianceDomain` / `ComplianceAct` — domain picker and act titles passed to the LLM.
+- `AnalysisJob` — status, trace id, optional `complianceDomainId`, `inputFiles` JSON, `report` JSON.
+- `AnalysisReport`, `UploadedDocument`, `ComplianceIssue` — present in schema for richer reporting flows.
 
-### Option 2: Run App And Worker Separately
+Enums include `JobStatus`, `DocumentType`, `IssueSeverity`, `UserRole`, `AuthProvider`.
 
-1. Install dependencies:
+## API summary
 
-   ```bash
-   npm install
-   ```
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/compliance-domains` | List domains and compliance act titles |
+| `POST` | `/api/scans` | Start scan (`domainId` + `files`) |
+| `GET` | `/api/scans/[jobId]` | Job + report payload |
 
-2. Start Postgres and Redis however you prefer.
+## Setup gotchas
 
-3. Create `.env` from `.env.example`.
+- **Domains 503** — run `npx prisma db push` and `npm run db:seed`.
+- **Scans slow or timeout** — LLM work can take a long time; `maxDuration` is raised on the scan route for serverless-style hosts.
+- **File types** — API allows PDF and text-like types (not legacy invoice/BOL-only image flows unless you add MIME support).
+- **Queue** — background completion needs Redis + worker unless sync mode is on.
 
-4. Apply the schema:
-
-   ```bash
-   npx prisma db push
-   ```
-
-5. Start the Next.js app:
-
-   ```bash
-   npm run dev
-   ```
-
-6. Start the worker in a second terminal:
-
-   ```bash
-   npm run worker
-   ```
-
-7. Visit [http://localhost:3000](http://localhost:3000).
-
-## Available Scripts
-
-- `npm run dev` starts the Next.js development server.
-- `npm run build` builds the production app.
-- `npm run start` runs the production server.
-- `npm run lint` runs ESLint.
-- `npm run worker` starts the BullMQ analysis worker.
-
-## Auth API Routes
-
-- `POST /api/auth/register` creates a local user and a matching Supabase auth user.
-- `POST /api/auth/login` authenticates email/password and may return an MFA challenge.
-- `POST /api/auth/verify-mfa` verifies the MFA OTP for password login.
-- `POST /api/auth/otp/start` sends an email OTP.
-- `POST /api/auth/otp/verify` verifies the email OTP and signs the user in.
-- `GET /api/auth/oauth/google` starts Google OAuth.
-- `GET /api/auth/oauth/github` starts GitHub OAuth.
-- `GET /api/auth/oauth/callback` completes OAuth and issues app cookies.
-- `POST /api/auth/refresh` rotates the refresh token.
-- `POST /api/auth/logout` revokes the current session.
-- `GET /api/auth/me` returns the current authenticated user.
-
-## Analysis API Routes
-
-- `POST /api/analyze` uploads one or two documents and creates or reuses an analysis job.
-- `GET /api/analyze/[jobId]` returns the current job state and completed report when available.
-
-## Data Model Summary
-
-The current Prisma schema includes:
-
-- `User`
-- `RefreshToken`
-- `MfaChallenge`
-- `AuthProviderAccount`
-- `AnalysisJob`
-- `AnalysisReport`
-- `UploadedDocument`
-- `ComplianceIssue`
-
-Enums currently in use:
-
-- `UserRole`
-- `AuthProvider`
-- `JobStatus`
-- `DocumentType`
-- `IssueSeverity`
-
-## Typical User Flow
-
-1. Open `/auth`.
-2. Sign up or log in.
-3. Upload an invoice, a bill of lading, or both.
-4. Trigger analysis.
-5. Wait for immediate completion or queued background completion.
-6. Review the compliance score, risk level, issue list, and recommendations.
-
-## Known Setup Gotchas
-
-- The app depends on both Supabase and Prisma-backed Postgres configuration, so incomplete env setup will usually fail auth before analysis.
-- `POST /api/analyze` requires valid auth cookies or a bearer token.
-- Background analysis will not complete unless Redis and at least one worker are running.
-- OAuth flows require provider configuration in Supabase, not just local environment variables.
-
-<img width="1600" height="731" alt="WhatsApp Image 2026-04-16 at 5 14 15 PM" src="https://github.com/user-attachments/assets/e51d787e-6007-4dee-b692-0dbb0e5c8b5f" />
-<img width="1600" height="759" alt="WhatsApp Image 2026-04-16 at 5 15 55 PM" src="https://github.com/user-attachments/assets/cfc0722c-fefc-4e95-a2b8-7a7116357426" />
-<img width="1578" height="819" alt="WhatsApp Image 2026-04-16 at 5 16 13 PM" src="https://github.com/user-attachments/assets/81da537c-a3b6-49bb-80f7-d9f532bd66ff" />
-
-prototype demo:https://drive.google.com/file/d/1hSyPnS2rHhU0KTJgVbSPwikZKAQpdWk3/view?usp=drive_link
-
+Prototype demo: [Google Drive](https://drive.google.com/file/d/1tP-t-uOOy7EDftMf66LXbCvF-K929tca/view?usp=sharing)

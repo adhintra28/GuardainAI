@@ -119,25 +119,32 @@ Node.js 20+
 
 PostgreSQL (Local or via Docker)
 
-*  **OpenAI API Key
+OpenAI API Key
 
-*  **1. Environment Configuration
+1. Environment Configuration
 Copy .env.example to .env and configure your API keys (OpenAI, Clerk).
 
-*  **2. Database Initialization
-*  **Spin up the local database and apply the schema:
+---
+
+3. Database Initialization
+Spin up the local database and apply the schema:
 
 
-*  **npm install
-*  **npm run db:up           # Starts Postgres on port 5433 via Docker
-*  **npx prisma db push      # Pushes schema
-*  **npm run db:seed         # Seeds compliance domains
-*  3. Running the App (Synchronous Mode - Default)
+npm install
+npm run db:up           # Starts Postgres on port 5433 via Docker
+npx prisma db push      # Pushes schema
+npm run db:seed         # Seeds compliance domains
+
+---
+
+3. Running the App (Synchronous Mode - Default)
 By default, the app runs without a worker to simplify local development.
 
 Bash
 npm run dev
 Access the application at http://localhost:3000.
+
+---
 
 4. Running the App (Asynchronous Worker Mode)
 To test queue logic, you must have Redis running locally.

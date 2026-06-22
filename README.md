@@ -121,12 +121,12 @@ PostgreSQL (Local or via Docker)
 
 OpenAI API Key
 
-1. Environment Configuration
+## 1. Environment Configuration
 Copy .env.example to .env and configure your API keys (OpenAI, Clerk).
 
 ---
 
-3. Database Initialization
+## 2. Database Initialization
 Spin up the local database and apply the schema:
 
 

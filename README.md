@@ -137,7 +137,7 @@ npm run db:seed         # Seeds compliance domains
 
 ---
 
-3. Running the App (Synchronous Mode - Default)
+## 3. Running the App (Synchronous Mode - Default)
 By default, the app runs without a worker to simplify local development.
 
 Bash
@@ -146,7 +146,7 @@ Access the application at http://localhost:3000.
 
 ---
 
-4. Running the App (Asynchronous Worker Mode)
+## 4. Running the App (Asynchronous Worker Mode)
 To test queue logic, you must have Redis running locally.
 
 Set REDIS_URL in your .env.

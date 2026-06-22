@@ -1,178 +1,151 @@
-# Guardian AI (prototype)
+# Guardian AI
 
-Guardian AI is a Next.js app for **AI-assisted compliance scanning**. Users pick a **compliance domain** (seeded from regulatory “acts”), upload **one or more documents** (PDFs, plain text, Markdown, JSON, HTML, etc.), and get a **score, risk level, and per-act findings** with summaries. A public **marketing site** lives at `/`; the **scanner** and **dashboard** use a shared shell and work in **prototype mode without sign-in**, while **Clerk** is wired in for real authentication.
+Welcome to the Guardian AI repository. This document serves as the primary understanding and architectural overview 
 
-## What’s in the repo today
+---
 
-- **Landing** at `/` — marketing homepage (Guardian AI positioning).
-- **Scanner** at `/scanner` — domain selection, multi-file upload, scan results (via `ScannerWorkspace`).
-- **Dashboard** at `/dashboard` — overview metrics derived from completed scans.
-- **Other UI routes** — reports, alerts, settings, frameworks, domains, solutions, pricing, about, docs (prototype/navigation shells as implemented under `src/app/`).
-- **Clerk** — `ClerkProvider` in `src/app/layout.tsx`, sign-in at `/auth`, sign-up at `/auth/sign-up`, `clerkMiddleware` in `src/middleware.ts` (auth is optional; API routes still resolve a user for jobs).
-- **Postgres + Prisma** — jobs, domains, acts, and scan results. Seed populates domains/acts from `src/lib/scannerDomains.ts`.
-- **OpenAI** — `complianceScanPipeline` extracts text (PDF via `pdf-parse`) and runs a structured LLM pass over the domain’s act titles.
-- **Background processing (optional)** — BullMQ + Redis + `npm run worker` when not running scans synchronously.
+## 📖 Project Overview
 
-## User flow
+Guardian AI is a full-stack B2B SaaS platform engineered to automate enterprise compliance auditing and regulatory risk assessment. By enabling multi-format document ingestion, the system allows users to select specific compliance domains (seeded from regulatory "acts") and run an automated, AI-driven policy validation pass. The output provides the user with an actionable risk severity score, issue categorization, and per-act summaries. 
 
-1. Open `/` or go straight to `/scanner`.
-2. Optionally sign in with Clerk (`/auth`); otherwise scans attach to a shared anonymous prototype user.
-3. Choose a compliance domain (loaded from `GET /api/compliance-domains`; requires DB + seed).
-4. Upload files and submit — `POST /api/scans` creates a job, runs the pipeline **inline or queued** (see below).
-5. Poll `GET /api/scans/[jobId]` for `status`, `report`, and errors.
+The architecture is designed to be highly resilient, featuring a dual-mode execution engine that can handle heavy-compute enterprise workloads asynchronously via background queues, while maintaining synchronous fallbacks for constrained serverless environments.
 
-## Tech stack
+---
 
-- Next.js **16** (App Router), React **19**, TypeScript
-- Tailwind CSS **4**
-- **Clerk** (`@clerk/nextjs`) for authentication UI and sessions
-- **Prisma** + PostgreSQL
-- **BullMQ** + **ioredis** (optional when using the worker)
-- **OpenAI** SDK, **Zod**, **pdf-parse**, **uuid**
+## ✨ Core Features
 
-## Architecture (high level)
+*   **Multi-Format Document Ingestion:** Supports automated text extraction from PDFs (via `pdf-parse`), Markdown, JSON, HTML, and plain text.
+*   **Structured AI Extraction:** Utilizes the OpenAI SDK and Zod to enforce strictly structured, deterministic JSON outputs from the LLM, ensuring consistent risk scoring and issue mapping.
+*   **Dual-Mode Execution Engine:** 
+    *   *Asynchronous Mode:* Leverages BullMQ and Redis for heavy document processing, decoupled from the main API thread.
+    *   *Synchronous Mode:* In-process API execution fallback (`COMPLIANCE_SCAN_SYNC=true`) for environments without Redis.
+*   **Multi-Tenant Ready:** Integrated with Clerk for seamless authentication and workspace management.
+*   **Real-time Polling & Dashboards:** Front-end workspace that polls job statuses and renders risk data dynamically.
 
-### Frontend
+---
 
-- `src/app/page.tsx` — landing page.
-- `src/app/scanner/page.tsx` — scanner entry; `src/components/scanner/ScannerWorkspace.tsx` — upload, domain pick, polling, results.
-- `src/components/guardian/*` — marketing header/footer, dashboard shell, sidebar, Clerk auth panels.
+## 🛠️ Technology Stack
 
-### API
+**Frontend Ecosystem**
+*   **Framework:** Next.js 16 (App Router) & React 19
+*   **Styling:** Tailwind CSS v4
+*   **State & Auth:** Clerk (`@clerk/nextjs`)
 
-- `POST /api/scans` — `multipart/form-data`: required `domainId`, one or more `files`. Stores uploads under `UPLOAD_DIR` (default `./uploads`), creates an `AnalysisJob`, then completes **synchronously** or enqueues to Redis.
-- `GET /api/scans/[jobId]` — job status and `report` for the current scan user.
-- `GET /api/compliance-domains` — domains and act titles from the database (503 if DB not migrated/seeded).
+**Backend & Infrastructure**
+*   **Language:** TypeScript / Node.js 20+
+*   **Database:** PostgreSQL (managed via Prisma ORM)
+*   **Queues & Workers:** BullMQ + ioredis
+*   **AI/LLM:** OpenAI API (`gpt-4o-mini` default), Zod for schema validation
+*   **Utilities:** `pdf-parse`, `uuid`
 
-### Services & worker
+---
 
-- `src/services/complianceScanPipeline.ts` — text extraction + LLM structured findings + score/risk.
-- `src/services/complianceScanJob.ts` — loads job, runs pipeline, persists `report` on `AnalysisJob`.
-- `src/worker/analyzeWorker.ts` — BullMQ consumer calling `executeComplianceScan`.
+## 🔄 The Process: Architectural Flow
 
-### Auth & users
+1.  **Ingestion & Auth:** A user authenticates via Clerk (or defaults to the anonymous prototype user) and accesses the `/scanner` workspace.
+2.  **Domain Selection:** The UI fetches available compliance domains (`GET /api/compliance-domains`) seeded in the PostgreSQL database.
+3.  **Upload & Job Creation:** The user uploads files (`multipart/form-data` to `POST /api/scans`). The system securely stores the payload and instantiates an `AnalysisJob` in the database with a `PENDING` status.
+4.  **Pipeline Execution (The Orchestration):**
+    *   *If Async:* The API enqueues the job to Redis. The BullMQ worker (`src/worker/analyzeWorker.ts`) picks it up.
+    *   *If Sync:* The API calls `complianceScanPipeline.ts` directly.
+5.  **LLM Processing:** The pipeline extracts text, chunks it if necessary, and prompts the LLM to validate the text against the selected domain's act titles, returning a Zod-validated JSON report.
+6.  **Resolution & Polling:** The `AnalysisJob` is updated to `COMPLETED` or `FAILED`. The frontend utilizes polling (`GET /api/scans/[jobId]`) to detect the state change and render the final compliance report.
 
-- `src/lib/authSession.ts` — maps Clerk users to `User` rows by email, or uses a fixed anonymous email for unsigned scans.
+---
 
-### Infra
+## 🪝 Routing & State (History & Hooks)
 
-- `docker-compose.yml` — **PostgreSQL16** only (`guardian` DB, host port **5433**). No Redis/app/worker services in compose.
-- `Dockerfile` — production-style Node20 image that builds and runs `next start`.
+To manage complex scanner states and navigation seamlessly, we utilize Next.js App Router paradigms:
 
-## Sync vs queued scans
+*   **Routing (`useRouter` / `usePathname`):** Replaces legacy `useHistory` patterns. We utilize `next/navigation` hooks to programmatically push users to the dashboard upon successful scan completion or to handle deep-linking into specific scan reports.
+*   **Search Params (`useSearchParams`):** Used to persist non-sensitive state in the URL (e.g., currently selected framework tabs or active filters on the dashboard), allowing users to share links to specific views.
+*   **Custom Polling Hooks:** The scanner workspace abstracts the `setInterval` logic into a custom React hook that manages the loading state, error boundaries, and data hydration while waiting for the BullMQ worker to finish.
 
-- **`COMPLIANCE_SCAN_SYNC=true`** — run the full scan in the API process (recommended on hosts without Redis, e.g. Railway).
-- **Development** — scans run **inline by default** so you do not need Redis or a worker unless you set `USE_BULLMQ_IN_DEV=true`.
-- **Production-style queue** — unset `COMPLIANCE_SCAN_SYNC` (or set to `false`), run Redis, start `npm run worker`. If the queue is unavailable, `POST /api/scans` falls back to synchronous execution.
+---
 
-## Project structure
+## 📊 Coordination & Measurements
+
+To ensure system reliability and team velocity, we measure and track the following:
+
+*   **Job Status Tracking:** Every `AnalysisJob` is strictly state-managed (`PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`). This allows us to measure queue latency and LLM execution times.
+*   **Observability & Monitoring:** System monitoring (such as Prometheus) can track routing efficiency, LLM API latency, and queue depths in real-time, allowing us to scale the Redis workers horizontally when enterprise workloads spike.
+*   **Team Coordination:** All database schema changes must be pushed via Prisma migrations (`npm run db:migrate:deploy`). Ensure local environments are seeded (`npm run db:seed`) to prevent 503 errors on the domain endpoints.
+
+---
+
+## 🧠 What I Learned
+
+*   **Resilient Async Architecture:** Designing the fallback mechanism between BullMQ and synchronous serverless execution taught me how to architect applications that can survive infrastructure constraints (e.g., deploying to environments without a Redis cache).
+*   **Deterministic LLM Outputs:** Forcing an LLM to act predictably for enterprise B2B software is challenging. Utilizing `Zod` in tandem with the OpenAI SDK was crucial for generating strictly typed data structures instead of raw text strings.
+*   **Multi-tenant Data Modeling:** Building the Prisma schema to accommodate both authenticated Clerk users and anonymous prototype sessions required careful thought regarding data ownership and row-level security concepts.
+
+---
+
+## 📁 File Structure
 
 ```text
 prototype/
 ├── prisma/
-│   ├── schema.prisma
-│   └── seed.ts
+│   ├── schema.prisma         # Database schema definitions
+│   └── seed.ts               # Seed data for compliance domains/acts
 ├── src/
-│   ├── app/
+│   ├── app/                  # Next.js App Router pages & API routes
 │   │   ├── api/
 │   │   │   ├── compliance-domains/
 │   │   │   └── scans/
-│   │   ├── auth/
+│   │   ├── auth/             # Clerk authentication routes
 │   │   ├── dashboard/
 │   │   ├── scanner/
 │   │   ├── layout.tsx
-│   │   └── page.tsx
-│   ├── components/
-│   │   ├── guardian/
-│   │   └── scanner/
-│   ├── lib/
-│   ├── services/
-│   ├── types/
-│   ├── worker/
-│   └── middleware.ts
-├── docker-compose.yml
-├── Dockerfile
+│   │   └── page.tsx          # Marketing Landing Page
+│   ├── components/           # Reusable React components
+│   │   ├── guardian/         # Shell, sidebar, global UI
+│   │   └── scanner/          # Upload UI, domain picker, polling logic
+│   ├── lib/                  # Utilities, auth sessions, constants
+│   ├── services/             # Core business logic (Jobs, LLM Pipelines)
+│   ├── types/                # TypeScript interfaces and Zod schemas
+│   ├── worker/               # BullMQ consumers
+│   └── middleware.ts         # Clerk auth and route protection
+├── docker-compose.yml        # Local PostgreSQL infrastructure
+├── Dockerfile                # Production Node.js image
 ├── package.json
 └── README.md
 ```
+---
+## Onboarding & Local Setup
 
-## Environment variables
+Prerequisites
+Node.js 20+
 
-Copy `.env.example` to `.env`. Important values:
+PostgreSQL (Local or via Docker)
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` | LLM calls for compliance evaluation |
-| `OPENAI_COMPLIANCE_MODEL` | Model name (default in example: `gpt-4o-mini`) |
-| `PII_ENCRYPTION_KEY` | Used where sensitive payloads are encrypted (see codebase) |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | Clerk |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | Match app routes (`/auth`, `/auth/sign-up`) |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis when using BullMQ + worker |
-| `COMPLIANCE_SCAN_SYNC` | `true` to force in-process scans |
-| `USE_BULLMQ_IN_DEV` | Set to opt into the queue in development |
+*  **OpenAI API Key
 
-Railway-focused notes in `.env.example` explain using a **public** Postgres URL from a laptop vs private network URLs.
+*  **1. Environment Configuration
+Copy .env.example to .env and configure your API keys (OpenAI, Clerk).
 
-## Local development
+*  **2. Database Initialization
+*  **Spin up the local database and apply the schema:
 
-### Prerequisites
 
-- Node.js **20+** and npm
-- PostgreSQL (local or Docker)
-- OpenAI API key
-- Clerk application keys (for sign-in; scans still work without login in prototype mode)
-- Redis + worker **only** if you disable sync / enable BullMQ in dev
+*  **npm install
+*  **npm run db:up           # Starts Postgres on port 5433 via Docker
+*  **npx prisma db push      # Pushes schema
+*  **npm run db:seed         # Seeds compliance domains
+*  3. Running the App (Synchronous Mode - Default)
+By default, the app runs without a worker to simplify local development.
 
-### Quick start (Postgres via Docker)
+Bash
+npm run dev
+Access the application at http://localhost:3000.
 
-1. `npm install`
-2. Copy `.env.example` → `.env` and set `DATABASE_URL` (for compose: `postgresql://postgres:postgres@127.0.0.1:5433/guardian?schema=public`).
-3. `npm run db:up` — starts Postgres (`docker compose up -d`).
-4. `npx prisma db push` and `npm run db:seed` — schema + compliance domains/acts.
-5. `npm run dev` — [http://localhost:3000](http://localhost:3000).
+4. Running the App (Asynchronous Worker Mode)
+To test queue logic, you must have Redis running locally.
 
-### Worker + Redis (optional)
+Set REDIS_URL in your .env.
 
-1. Run Redis locally and set `REDIS_URL`.
-2. Set `USE_BULLMQ_IN_DEV=true` and ensure `COMPLIANCE_SCAN_SYNC` is not forcing sync (or use production-like env).
-3. In a second terminal: `npm run worker`.
+Set USE_BULLMQ_IN_DEV=true and ensure COMPLIANCE_SCAN_SYNC=false.
 
-### Scripts
+In terminal one: npm run dev
 
-- `npm run dev` — Next.js dev server
-- `npm run build` / `npm run start` — production build and server
-- `npm run lint` — ESLint
-- `npm run worker` — BullMQ worker
-- `npm run db:up` — Docker Compose Postgres
-- `npm run db:push` — `prisma db push`
-- `npm run db:seed` — seed domains/acts
-- `npm run db:migrate:deploy` — `prisma migrate deploy`
-
-## Data model (Prisma)
-
-Notable models:
-
-- `User` — still used for job ownership (Clerk users upserted by email; anonymous prototype user for unsigned scans).
-- `ComplianceDomain` / `ComplianceAct` — domain picker and act titles passed to the LLM.
-- `AnalysisJob` — status, trace id, optional `complianceDomainId`, `inputFiles` JSON, `report` JSON.
-- `AnalysisReport`, `UploadedDocument`, `ComplianceIssue` — present in schema for richer reporting flows.
-
-Enums include `JobStatus`, `DocumentType`, `IssueSeverity`, `UserRole`, `AuthProvider`.
-
-## API summary
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/compliance-domains` | List domains and compliance act titles |
-| `POST` | `/api/scans` | Start scan (`domainId` + `files`) |
-| `GET` | `/api/scans/[jobId]` | Job + report payload |
-
-## Setup gotchas
-
-- **Domains 503** — run `npx prisma db push` and `npm run db:seed`.
-- **Scans slow or timeout** — LLM work can take a long time; `maxDuration` is raised on the scan route for serverless-style hosts.
-- **File types** — API allows PDF and text-like types (not legacy invoice/BOL-only image flows unless you add MIME support).
-- **Queue** — background completion needs Redis + worker unless sync mode is on.
-
-Prototype demo: [Google Drive](https://drive.google.com/file/d/1tP-t-uOOy7EDftMf66LXbCvF-K929tca/view?usp=sharing)
+In terminal two: npm run worker

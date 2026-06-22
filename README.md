@@ -6,6 +6,8 @@ Welcome to the Guardian AI repository. This document serves as the primary under
 
 ## 📖 Project Overview
 
+https://github.com/user-attachments/assets/0eeb67e1-d914-42a0-b787-671d763c7369
+
 Guardian AI is a full-stack B2B SaaS platform engineered to automate enterprise compliance auditing and regulatory risk assessment. By enabling multi-format document ingestion, the system allows users to select specific compliance domains (seeded from regulatory "acts") and run an automated, AI-driven policy validation pass. The output provides the user with an actionable risk severity score, issue categorization, and per-act summaries. 
 
 The architecture is designed to be highly resilient, featuring a dual-mode execution engine that can handle heavy-compute enterprise workloads asynchronously via background queues, while maintaining synchronous fallbacks for constrained serverless environments.
